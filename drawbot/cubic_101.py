@@ -16,10 +16,10 @@ class Point(NamedTuple):
     def add(self, other):
         return Point(self.x + other.x, self.y + other.y)
 
-def of_magnitude(vec, new_mag):
-    # 0? hopefully not today :D
-    mag = vec.magnitude()
-    return Point(new_mag * vec.x / mag, new_mag * vec.y / mag)   
+    def of_magnitude(self, new_mag):
+        # 0? hopefully not today :D
+        mag = self.magnitude()
+        return Point(new_mag * self.x / mag, new_mag * self.y / mag)   
 
 
 mesh = (
@@ -154,30 +154,22 @@ warp = (
     Point(x=127, y=-8),
 )
  
+from fontTools.misc.bezierTools import splitCubic
 
 # Take advantage of what we know about our warp:
 # y-only
 # only active between warp[0].x and warp[-1].x
-# no kinks/overlaps; safe to bsearch between min/max x
+# no kinks/overlaps; there should be only 2 curves when split
 # TODO cache based on x; likely drawings reuse same x
 def flagWarpVec(pt, accuracy=0.001):
     if pt.x < warp[0].x or pt.x > warp[-1].x:
         return pt, Point(0, 0)
-    # binary search over t seeking same x as pt
-    t = 1.0
-    step = 0.5
-    for i in range(100):
-        wpt = cubic_pos(t, *warp)
-        if abs(wpt.x - pt.x) <= accuracy:
-            return (Point(0, wpt.y), cubic_deriv_pos(t, *warp))
-        if wpt.x > pt.x:
-            t -= step
-        else:
-            t += step
-        assert t >= 0 and t <= 1
-        step = step / 2
-        
-    raise ValueError(f"Unable to find warp for {pt}")
+    segments = splitCubic(*warp, pt.x, False)
+    # lazy; really we care there is only one start/end at pt.x
+    assert len(segments) == 2
+    wpt = Point(*(segments[0][-1]))
+    deriv_pt = cubic_deriv_pos(1, *(Point(*s) for s in segments[0]))
+    return Point(0, wpt.y), deriv_pt
 
 def flagWarpPt(pt, accuracy=0.001):
     warpvec, derivvec = flagWarpVec(pt, accuracy)
@@ -199,7 +191,7 @@ for pt in warp:
 
 for x in range(1, 127 + 1, 4):
     pt = Point(x, 0)
-    warp_pt, warp_deriv_pt = flagWarpPt(pt)
+    warp_pt, warp_deriv_vec = flagWarpPt(pt)
 
     stroke(0, 0.25, 0.9)
     strokeWidth(0.5)
@@ -207,32 +199,9 @@ for x in range(1, 127 + 1, 4):
 
     stroke(0, 0.25, 0.9, 0.5)
     strokeWidth(0.25)
-    if warp_deriv_pt1.magnitude() != 0:
-        tan = of_magnitude(warp_deriv_pt1, 1.5)
-        
-        
+    if warp_deriv_vec.magnitude() != 0:
+        tan1 = warp_deriv_vec.of_magnitude(1.5)
+        tan2 = Point(-tan1.x, -tan1.y)
+        line(tan1.add(warp_pt), tan2.add(warp_pt))
 
-translate(y=32)
-
-for x in range(0, 120+1, 8):
-    stroke(0.4, 0.4, 0.4)
-    line((x, 0), (x+2, 0))
-    
-    warp_pt1, warp_deriv_pt1 = flagWarpPt(Point(x, 0))
-    warp_pt2, warp_deriv_pt2 = flagWarpPt(Point(x + 2, 0))
-    line((x + 0, 0), (x + 2, 0))
-    
-    # line tangent, drawn from the warp pt
-    if warp_deriv_pt1.magnitude() != 0:
-        stroke(0.6, 0.4, 0.4)
-        tan_pt = of_magnitude(warp_deriv_pt1, 2)
-        tan_pt = Point(warp_pt1.x + tan_pt.x, warp_pt1.y + tan_pt.y)
-        line(warp_pt1, tan_pt)
-
-    stroke(0.7, 0.7, 0.7)
-    warp_pt1, warp_deriv_pt1 = flagWarpPt(Point(x + 6, 0))
-    warp_pt2, warp_deriv_pt2 = flagWarpPt(Point(x + 8, 0))
-    line((x + 6, 0), (x+8, 0))
-
-    #line(warp_pt1, warp_pt2)
     
