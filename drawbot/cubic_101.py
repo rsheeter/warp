@@ -36,12 +36,15 @@ mesh = (
 oncurve = {0, 3, 4, 7}
 offcurve = {1, 2, 5, 6}
 
-size(128, 196)
+size(275, 200)
 
 def dot(at, radius=2):
     oval(at.x-radius/2, at.y-radius/2, radius, radius)
 
 # draw the basic shape and control points
+translate(x=2, y=70)
+fontSize(6)
+text("Basic Shape", (0, 116))
 #	cairo_line_to(cr,   M(0));
 #	cairo_curve_to(cr,  M(1), M(2), M(3));
 #	cairo_line_to(cr,   M(4));
@@ -123,8 +126,6 @@ def cubic_deriv_pos(t, p0, p1, p2, p3):
 # points along curve
 
 mesh_deriv = cubic_deriv(mesh[0], mesh[1], mesh[2], mesh[3])
-print("cubic", mesh[0], mesh[1], mesh[2], mesh[3])
-print("deriv", mesh_deriv)
 line(mesh_deriv[0], mesh_deriv[1])
 line(mesh_deriv[1], mesh_deriv[2])
 
@@ -179,7 +180,11 @@ def flagWarpPt(pt, accuracy=0.001):
     )
         
 
-translate(y=156)
+translate(y=-20)
+
+stroke(None)
+fill(0, 0, 0)
+text("Shifts & Derivatives", (0, 6))
 
 stroke(0.6, 0.6, 0.6)
 line(warp[0], Point(warp[-1].x, warp[0].y))
@@ -204,4 +209,83 @@ for x in range(1, 127 + 1, 4):
         tan2 = Point(-tan1.x, -tan1.y)
         line(tan1.add(warp_pt), tan2.add(warp_pt))
 
-    
+# OK, let's try to actually warp something?
+translate(x=132, y=70)
+
+stroke(None)
+fill(0, 0, 0)
+text("Original Shape(s)", (0, 64))
+
+# we'll assume magic converted a rect into naive cubics
+rect = (
+    # bottom
+    (
+          Point(  0,  0),
+          Point( 43,  0),
+          Point( 85,  0),
+          Point(128,  0),
+    ),
+    # rhs
+    (
+          Point(128,  0),
+          Point(128, 20),
+          Point(128, 40),
+          Point(128, 60),
+    ),
+    # top
+    (
+          Point(128, 60),
+          Point( 85, 60),
+          Point( 43, 60),
+          Point(  0, 60),
+    ),
+    # left
+    (
+          Point(  0, 60),
+          Point(  0, 40),
+          Point(  0, 20),
+          Point(  0,  0),
+    ),
+)
+rect_bez = BezierPath()
+rect_bez.moveTo(rect[0][0])
+for cubic in rect:
+    rect_bez.curveTo(*cubic)
+
+
+fill(None)
+stroke(1, 0, 0)
+strokeWidth(1)
+drawPath(rect_bez)
+
+for cubic in rect:
+    for pt in cubic:
+        stroke(None)
+        fill(0, 0.5, 0.75)
+        dot(pt)
+
+translate(y=-20)
+
+stroke(None)
+fill(0, 0, 0)
+text("Mangled Shape(s)", (2, 2))
+
+translate(y=-64)
+
+# original for reference
+fill(None)
+stroke(0.5, 0.5, 0.5)
+strokeWidth(0.25)
+drawPath(rect_bez)
+
+# warp
+
+num_splits = 4
+warp_mesh = []
+for (p0, p1, p2, p3) in rect:
+    print("Warp", p0, p1, p2, p3)
+    warp_pt, warp_deriv_vec = flagWarpPt(pt)
+
+fill(None)
+stroke(1, 0, 0)
+strokeWidth(1)
