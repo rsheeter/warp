@@ -10,6 +10,18 @@ class Point(NamedTuple):
     x: float
     y: float
 
+    def magnitude(self):
+        return sqrt(self.x * self.x + self.y * self.y)
+    
+    def add(self, other):
+        return Point(self.x + other.x, self.y + other.y)
+
+def of_magnitude(vec, new_mag):
+    # 0? hopefully not today :D
+    mag = vec.magnitude()
+    return Point(new_mag * vec.x / mag, new_mag * vec.y / mag)   
+
+
 mesh = (
   Point(  1, top+C),
   Point( 43, top-B+C),
@@ -141,6 +153,7 @@ warp = (
     Point(x=85, y=13),
     Point(x=127, y=-8),
 )
+ 
 
 # Take advantage of what we know about our warp:
 # y-only
@@ -194,7 +207,10 @@ for x in range(1, 127 + 1, 4):
 
     stroke(0, 0.25, 0.9, 0.5)
     strokeWidth(0.25)
-    #line(pt, warp_deriv_pt)
+    if warp_deriv_pt1.magnitude() != 0:
+        tan = of_magnitude(warp_deriv_pt1, 1.5)
+        
+        
 
 translate(y=32)
 
@@ -205,11 +221,18 @@ for x in range(0, 120+1, 8):
     warp_pt1, warp_deriv_pt1 = flagWarpPt(Point(x, 0))
     warp_pt2, warp_deriv_pt2 = flagWarpPt(Point(x + 2, 0))
     line((x + 0, 0), (x + 2, 0))
-    line(warp_pt1, warp_pt2)
+    
+    # line tangent, drawn from the warp pt
+    if warp_deriv_pt1.magnitude() != 0:
+        stroke(0.6, 0.4, 0.4)
+        tan_pt = of_magnitude(warp_deriv_pt1, 2)
+        tan_pt = Point(warp_pt1.x + tan_pt.x, warp_pt1.y + tan_pt.y)
+        line(warp_pt1, tan_pt)
 
     stroke(0.7, 0.7, 0.7)
     warp_pt1, warp_deriv_pt1 = flagWarpPt(Point(x + 6, 0))
     warp_pt2, warp_deriv_pt2 = flagWarpPt(Point(x + 8, 0))
     line((x + 6, 0), (x+8, 0))
-    line(warp_pt1, warp_pt2)
+
+    #line(warp_pt1, warp_pt2)
     
