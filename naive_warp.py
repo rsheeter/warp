@@ -16,11 +16,16 @@ Usage:
 """
 from absl import app
 from absl import flags
+from cu2qu import curves_to_quadratic as cubic_to_quad
 import enum
-from fontTools.misc.bezierTools import splitCubic, splitCubicAtT
+from fontTools.misc.bezierTools import (
+  calcCubicArcLength,
+  splitCubic,
+  splitCubicAtT
+)
 from functools import partial
 from lxml import etree
-
+from math import ceil, sqrt
 from pathlib import Path
 
 from picosvg.svg import SVG
@@ -31,9 +36,10 @@ FLAGS = flags.FLAGS
 
 
 flags.DEFINE_string("out_file", "-", "Output, - means stdout")
+flags.DEFINE_bool("draw_points", False, "Dot points")
 
 
-def _line_pos(t, start, end):
+def line_pos(t, start, end):
     sx, sy = start
     ex, ey = end
     return (sx + t * (ex - sx), sy + t * (ey - sy))
@@ -75,6 +81,14 @@ def cubic_deriv_pos(t, p0, p1, p2, p3):
     return quad_pos(t, *cubic_deriv(p0, p1, p2, p3))
 
 
+def clamp(minv, maxv, v):
+  if v < minv:
+    return minv
+  if v > maxv:
+    return maxv
+  return v
+
+
 class FlagWarp:
   def __init__(self, box):
     # cubic start, control, control, end
@@ -90,11 +104,11 @@ class FlagWarp:
     )
     self.miny = min(y for _, y in self.warp)
     self.maxy = max(y for _, y in self.warp)
-    print(f"x [{self.minx}, {self.maxx}]")
-    print(f"y [{self.miny}, {self.maxy}]")
     print("warp", self.warp)
 
   def _seg_ending_at(self, x):
+    x = clamp(self.minx, self.maxx, x)
+
     # Draw a line at pt.x through the warp; the pt on the warp is be the desired offset
     segments = splitCubic(*self.warp, x, False)
 
@@ -104,12 +118,7 @@ class FlagWarp:
 
     return segments[0]
 
-  def _should_warp(self, pt):
-    return pt[0] >= self.minx and pt[0] <= self.maxx
-
   def vec(self, pt):
-    if not self._should_warp(pt):
-        raise ValueError(f"{pt} outside [{self.minx}, {self.maxx}]")
     cubic_to_x = self._seg_ending_at(pt[0])
     # no x-movement, we just want the y-part of the last point
     result = (0, cubic_to_x[-1][1])
@@ -117,8 +126,6 @@ class FlagWarp:
     return result
 
   def deriv(self, pt):
-    if not self._should_warp(pt):
-        return None
     return _cubic_deriv_pos(1, *self._seg_ending_at(pt[0]))
 
 
@@ -127,16 +134,19 @@ def _reduce_text(text):
     return text if text else None
 
 
-def _cubic_callback(num_splits, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args):
+def _cubic_callback(subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args):
+  if cmd.upper() == 'M':
+    return ((cmd, args),)
+
   # Convert to cubic if needed
   if cmd.upper() == 'Z':
-    # a line back to subpath start
+    # a line back to subpath start ... unless we are there already
+    if curr_xy == subpath_start:
+      return ()
     cmd = 'L'
     args = subpath_start
 
-  if cmd.upper() == 'M':
-    return ((cmd, args),)
-  elif cmd == 'L':
+  if cmd == 'L':
     # line from curr_xy to args
     assert len(args) == 2
     end_xy = args
@@ -144,8 +154,8 @@ def _cubic_callback(num_splits, subpath_start, curr_xy, cmd, args, prev_xy, prev
     # cubic ctl points 1/3rd and 2/3rds along
     cmd = "C"
     args = (
-      *_line_pos(0.33, curr_xy, end_xy),
-      *_line_pos(0.66, curr_xy, end_xy),
+      *line_pos(0.33, curr_xy, end_xy),
+      *line_pos(0.66, curr_xy, end_xy),
       *end_xy,
     )
 
@@ -154,26 +164,88 @@ def _cubic_callback(num_splits, subpath_start, curr_xy, cmd, args, prev_xy, prev
 
   assert len(args) == 6
 
-  split_t = tuple(t / num_splits for t in range(1, num_splits))
-  cubic = (curr_xy, args[0:2], args[2:4], args[4:6])
-  new_cmds = []
-  for split_cubic in splitCubicAtT(*cubic, *split_t):
-    assert len(split_cubic) == 4, split_cubic
-    new_cmds.append(('C', split_cubic[1] + split_cubic[2] + split_cubic[3]))
-  return tuple(new_cmds)
+  return (('C', args),)
 
 
-def _warp_callback(warp, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args):
-  args = list(args)
-  new_args = []
-  while(args):
-    x, y = args.pop(0), args.pop(0)
-    dx, dy = warp.vec((x, y))
-    new_args.append(x + dx)
-    new_args.append(y + dy)
-    #print(f"({x:.2f}, {y:.2f}) => ({x+dx:.2f}, {y+dy:.2f}) delta ({dx:.2f}, {dy:.2f})")
+def _dist(p0, p1):
+  return sqrt(abs(p0[0] - p1[0]) ** 2 + abs(p0[1] - p1[1]))
 
-  return ((cmd, tuple(new_args)),)
+
+def _max_err(view_box):
+  # TODO is this remotely reasonable?
+  return _dist((0, 0), (view_box.w, view_box.h)) / 200
+
+
+def _ref_pts(view_box, cubic):
+  # we award you one reference per 1000th of viewbox diagonal
+  # 100th didn't seem to be enough
+
+  curve_len = calcCubicArcLength(*cubic)
+  diagonal = _dist((0, 0), (view_box.w, view_box.h))
+  num_refs = max(ceil(1000 * curve_len / diagonal), 10)
+  ts = tuple(t / num_refs for t in range(0, num_refs + 1))
+  return tuple(cubic_pos(t, *cubic) for t in ts)
+
+
+def _nearest(p0, pts):
+  # TODO: kurbo has a real implementation but this will do for experimentation
+  result = (p0, pts[0])
+  for p1 in pts[1:]:
+    if _dist(p0, p1) < _dist(*result):
+      result = (p0, p1)
+  return result
+
+
+def _warp_pt(warp, pt):
+  dx, dy = warp.vec(pt)
+  return (pt[0] + dx, pt[1] + dy)
+
+
+def _unwarp_pt(warp, pt):
+  dx, dy = warp.vec(pt)
+  return (pt[0] - dx, pt[1] - dy)
+
+
+def _warp_cubic(warp, cubic):
+  return tuple(_warp_pt(warp, pt) for pt in cubic)
+
+
+def _warp_callback(view_box, warp, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args):
+  if cmd.upper() == 'M':
+    return ((cmd, _warp_pt(warp, args)),)
+
+  assert cmd == 'C', cmd
+  assert len(args) == 6
+
+  max_err = _max_err(view_box)
+
+  # build reference points (# based on arc length)
+  # unwarp: current was already warped, but we'll warp again when processing
+  initial_cubic = (_unwarp_pt(warp, curr_xy), args[0:2], args[2:4], args[4:6])
+  ref_pts = tuple(_warp_pt(warp, pt) for pt in _ref_pts(view_box, initial_cubic))
+
+  frontier = [initial_cubic]
+  acceptable = []
+  while frontier:
+    # take one down...
+    cubic = frontier.pop(0)
+    # warp it around...
+    warped_cubic = _warp_cubic(warp, cubic)
+
+    # ...good enough?
+    warp_refs = _ref_pts(view_box, warped_cubic)
+    ok = all(_dist(*_nearest(pt, ref_pts)) <= max_err for pt in warp_refs)
+
+    if ok:
+      acceptable.append(warped_cubic)
+    else:
+      # Cut the pre-warp cubic in half and try again
+      splits = list(splitCubicAtT(*cubic, 0.5))
+      assert len(splits) > 1
+      frontier = splits + frontier
+    #print(f"frontier {len(frontier)} accepted {len(acceptable)}; {len(warp_refs)} for warp")
+
+  return tuple(('C', sum(cubic[1:], ())) for cubic in acceptable)
 
 
 def _load_svg(argv):
@@ -203,9 +275,9 @@ def _bbox(boxes):
 def _coordstr(c):
   return f"{c:.2f}"
 
-def _dot(parent, at, radius=1):
+def _dot(parent, at, radius=1, color="cyan"):
   dot = etree.SubElement(parent, "circle")
-  dot.attrib["fill"] = "cyan"
+  dot.attrib["fill"] = color
   dot.attrib["cx"] = _coordstr(at[0])
   dot.attrib["cy"] = _coordstr(at[1])
   dot.attrib["r"] = _coordstr(radius)
@@ -226,11 +298,9 @@ def main(argv):
     box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
 
     warp = FlagWarp(box)
-    warp_callback = partial(_warp_callback, warp)
+    cubic_callback = partial(_cubic_callback)
+    warp_callback = partial(_warp_callback, svg.view_box(), warp)
 
-    cubic_callback = partial(_cubic_callback, 4)
-
-    
     for shape in svg.shapes():
       shape.explicit_lines(inplace=True)
       shape.walk(cubic_callback)
@@ -251,6 +321,27 @@ def main(argv):
       p0 = (p0[0], box.y + box.h)
       p1 = (p1[0], p1[1] + box.y + box.h)
       _line(tree, p0, p1)
+
+    _line(tree, (0, box.y), (138, box.y))
+    _line(tree, (0, box.y + box.h), (138, box.y + box.h))
+
+    if FLAGS.draw_points:
+      for shape in svg.shapes():
+        for cmd, args in shape.as_cmd_seq():
+          for i in range(0, len(args), 2):
+            color = "gray"
+            if cmd.upper() == 'M':
+              color = "darkgreen"
+            elif i == len(args) - 1:
+              color = "black"
+            pt = args[i:i+2]
+            _dot(tree, pt, radius=1.5, color=color)
+
+            color="blue"
+            wv = warp.vec(args[i:i+2])
+            pt = (pt[0] - wv[0], pt[1] - wv[1])
+            #_dot(tree, pt, radius=1.5, color=color)
+      _dot(tree, (0,0), radius=2.5, color="purple")
 
     # lxml really likes to retain whitespace
     for e in tree.iter("*"):
