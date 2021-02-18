@@ -12,6 +12,7 @@ Note the lack of:
 
 Usage:
   python naive_warp.py 1f1e6_1f1ec.svg
+  python naive_warp.py noto-emoji/third_party/region-flags/svg/GB-WLS.svg --out_file GB-WLS-waved.svg
 """
 from absl import app
 from absl import flags
@@ -24,6 +25,13 @@ from pathlib import Path
 
 from picosvg.svg import SVG
 from picosvg.geometric_types import Rect
+
+
+FLAGS = flags.FLAGS
+
+
+flags.DEFINE_string("out_file", "-", "Output, - means stdout")
+
 
 def _line_pos(t, start, end):
     sx, sy = start
@@ -68,17 +76,18 @@ def cubic_deriv_pos(t, p0, p1, p2, p3):
 
 
 class FlagWarp:
-  def __init__(self, minx, maxx):
+  def __init__(self, box):
     # cubic start, control, control, end
-    # y-flipped for svg use
+    # based on Noto Emoji waveflag.c warp
+    y_scale = box.w / 128
+    self.minx = int(box.x)
+    self.maxx = int(box.x + box.w)
     self.warp = (
-        (int(minx), 0),
-        (int(minx + maxx / 3), -21),
-        (int(minx + 2 * maxx / 3), 13),
-        (int(maxx), -8)
+        (int(box.x), 0),
+        (int(self.minx + self.maxx / 3), int(-21 * y_scale)),
+        (int(self.minx + 2 * self.maxx / 3), int(13 * y_scale)),
+        (int(self.maxx), int(-8 * y_scale)),
     )
-    self.minx = int(minx)
-    self.maxx = int(maxx)
     self.miny = min(y for _, y in self.warp)
     self.maxy = max(y for _, y in self.warp)
     print(f"x [{self.minx}, {self.maxx}]")
@@ -216,7 +225,7 @@ def main(argv):
 
     box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
 
-    warp = FlagWarp(box.x, box.x + box.w)
+    warp = FlagWarp(box)
     warp_callback = partial(_warp_callback, warp)
 
     cubic_callback = partial(_cubic_callback, 4)
@@ -248,7 +257,12 @@ def main(argv):
         e.text = _reduce_text(e.text)
         e.tail = _reduce_text(e.tail)
 
-    print(etree.tostring(tree, pretty_print=True).decode("utf-8"))
+    out_content = etree.tostring(tree, pretty_print=True).decode("utf-8")
+    if FLAGS.out_file == "-":
+      print(out_content)
+    else:
+      with open(FLAGS.out_file, "w") as f:
+        f.write(out_content)
 
 
 if __name__ == "__main__":
