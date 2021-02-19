@@ -36,7 +36,7 @@ FLAGS = flags.FLAGS
 
 
 flags.DEFINE_string("out_file", "-", "Output, - means stdout")
-flags.DEFINE_bool("draw_points", False, "Dot points")
+flags.DEFINE_bool("debug_info", False, "Add potentially useful debug marks")
 
 
 def line_pos(t, start, end):
@@ -104,7 +104,6 @@ class FlagWarp:
     )
     self.miny = min(y for _, y in self.warp)
     self.maxy = max(y for _, y in self.warp)
-    print("warp", self.warp)
 
   def _seg_ending_at(self, x):
     x = clamp(self.minx, self.maxx, x)
@@ -171,29 +170,68 @@ def _dist(p0, p1):
   return sqrt(abs(p0[0] - p1[0]) ** 2 + abs(p0[1] - p1[1]))
 
 
+def points(cubic, num_seg=100):
+    # num_seq+1 coords on curve, equidistent in t (1/(num_seg) apart)
+    # basically http://pomax.github.io/bezierjs/#getLUT
+    return tuple(
+        cubic_pos(step/num_seg, *cubic)
+        for step in range(0, num_seg + 1)
+    )
+
+
 def _max_err(view_box):
   # TODO is this remotely reasonable?
   return _dist((0, 0), (view_box.w, view_box.h)) / 200
 
 
 def _ref_pts(view_box, cubic):
-  # we award you one reference per 1000th of viewbox diagonal
+  # we award you one segment per 1000th of viewbox diagonal
   # 100th didn't seem to be enough
 
   curve_len = calcCubicArcLength(*cubic)
   diagonal = _dist((0, 0), (view_box.w, view_box.h))
-  num_refs = max(ceil(1000 * curve_len / diagonal), 10)
-  ts = tuple(t / num_refs for t in range(0, num_refs + 1))
-  return tuple(cubic_pos(t, *cubic) for t in ts)
+  num_seg = max(ceil(1000 * curve_len / diagonal), 10)
+  return points(cubic, num_seg)
 
 
 def _nearest(p0, pts):
-  # TODO: kurbo has a real implementation but this will do for experimentation
   result = (p0, pts[0])
   for p1 in pts[1:]:
     if _dist(p0, p1) < _dist(*result):
       result = (p0, p1)
   return result
+
+
+def _cubic_nearest_range_t(cubic, curr_t=0, num_seg=100, min_t=0, max_t=1):
+  min_t = clamp(0, 1, min_t)
+  max_t = clamp(0, 1, max_t)
+
+  curr_t = clamp(min_t, max_t, curr_t)
+  curr_dist = _dist(cubic_pos(cubic, curr_t))
+  for step in range(0, num_seg + 1):
+    try_t = clamp(min_t, max_t, min_t + step * (max_t - min_t) / num_seg)
+    try_dist = _dist(cubic_pos(cubic, curr_t), cubic_pos(cubic, try_t))
+    if try_dist < curr_dist:
+      curr_t = try_t
+      curr_dist = try_dist
+  return curr_t
+
+
+def _cubic_nearest_t(cubic, pt):
+  # TODO: kurbo has a real implementation but this will do for experimentation
+  # inspired by http://pomax.github.io/bezierjs/#project
+
+  # try over full range then try to refine answer
+  curr_t = _cubic_nearest_range_t(cubic, curr_t=0, num_seg=100)
+
+  # we could repeat this as long as answer improves sufficiently?
+  curr_t = _cubic_nearest_range_t(cubic, curr_t=0, num_seg=100, min_t=curr_t - 1/100, max_t=curr_t + 1/100)
+
+  return curr_t
+
+
+def _cubic_nearest(cubic, pt):
+  return cubic_pos(cubic, _cubic_nearest_t(cubic, pt))
 
 
 def _warp_pt(warp, pt):
@@ -240,6 +278,7 @@ def _warp_callback(view_box, warp, subpath_start, curr_xy, cmd, args, prev_xy, p
       acceptable.append(warped_cubic)
     else:
       # Cut the pre-warp cubic in half and try again
+      # Intuition: there are better guesses than half
       splits = list(splitCubicAtT(*cubic, 0.5))
       assert len(splits) > 1
       frontier = splits + frontier
@@ -274,6 +313,7 @@ def _bbox(boxes):
 
 def _coordstr(c):
   return f"{c:.2f}"
+
 
 def _dot(parent, at, radius=1, color="cyan"):
   dot = etree.SubElement(parent, "circle")
@@ -310,22 +350,22 @@ def main(argv):
     tree = svg.toetree()
 
     # debug constructs
-    for pt in warp.warp:
-      _dot(tree, pt)
+    if FLAGS.debug_info:
+      for pt in warp.warp:
+        _dot(tree, pt)
 
-    for x in range(warp.minx, warp.maxx + 1, 4):
-      p0 = (x, 0)
-      p1 = (p0[0], warp.vec(p0)[1])
-      _line(tree, p0, p1)
+      for x in range(warp.minx, warp.maxx + 1, 4):
+        p0 = (x, 0)
+        p1 = (p0[0], warp.vec(p0)[1])
+        _line(tree, p0, p1)
 
-      p0 = (p0[0], box.y + box.h)
-      p1 = (p1[0], p1[1] + box.y + box.h)
-      _line(tree, p0, p1)
+        p0 = (p0[0], box.y + box.h)
+        p1 = (p1[0], p1[1] + box.y + box.h)
+        _line(tree, p0, p1)
 
-    _line(tree, (0, box.y), (138, box.y))
-    _line(tree, (0, box.y + box.h), (138, box.y + box.h))
+      _line(tree, (0, box.y), (138, box.y))
+      _line(tree, (0, box.y + box.h), (138, box.y + box.h))
 
-    if FLAGS.draw_points:
       for shape in svg.shapes():
         for cmd, args in shape.as_cmd_seq():
           for i in range(0, len(args), 2):
