@@ -23,6 +23,7 @@ from fontTools.misc.bezierTools import (
     calcCubicArcLength,
     calcQuadraticArcLength,
     splitCubic,
+    splitCubicAtT,
     splitQuadraticAtT,
 )
 from functools import partial
@@ -31,8 +32,9 @@ from math import ceil, sqrt
 from pathlib import Path
 import pathops
 
-from picosvg.svg import SVG
 from picosvg.geometric_types import Rect
+from picosvg.svg import SVG
+from picosvg.svg_meta import num_args
 
 
 FLAGS = flags.FLAGS
@@ -40,6 +42,7 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("out_file", "-", "Output, - means stdout")
 flags.DEFINE_bool("debug_info", False, "Add potentially useful debug marks")
+flags.DEFINE_integer("curve_order", 0, "Must be one of 2, 3, quadratic or cubic")
 
 
 def line_pos(t, start, end):
@@ -203,7 +206,7 @@ def _cubic_callback(subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_a
 
 
 def _quadratic_callback(
-    subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args, *, max_err
+    max_err, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
 ):
     if cmd.upper() == "M":
         return ((cmd, args),)
@@ -258,7 +261,7 @@ def points(curve, num_seg=100):
     return tuple(bez_pos(step / num_seg, *curve) for step in range(0, num_seg + 1))
 
 
-def _max_err(view_box):
+def _max_pt_err(view_box):
     # TODO is this remotely reasonable?
     return _dist((0, 0), (view_box.w, view_box.h)) / 200
 
@@ -271,7 +274,6 @@ def _quad_max_err(view_box):
 def _ref_pts(view_box, curve):
     # we award you one segment per 1000th of viewbox diagonal
     # 100th didn't seem to be enough
-
     if len(curve) == 4:
         curve_len = calcCubicArcLength(*curve)
     elif len(curve) == 3:
@@ -335,8 +337,9 @@ def _unwarp_pt(warp, pt):
     return (pt[0] - dx, pt[1] - dy)
 
 
-def _warp_bez(warp, curve):
-    return tuple(_warp_pt(warp, pt) for pt in curve)
+def _warp_cubic(warp, cubic):
+    assert len(cubic) == 4
+    return tuple(_warp_pt(warp, pt) for pt in cubic)
 
 
 def _warp_quad(warp, quad):
@@ -345,45 +348,68 @@ def _warp_quad(warp, quad):
     return quad_from_three_points(*(_warp_pt(warp, p) for p in quad_pts))
 
 
-def _warp_callback(
-    view_box, warp, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
-):
-    if cmd.upper() == "M":
-        return ((cmd, _warp_pt(warp, args)),)
+class PathWarp:
+    def __init__(self, view_box, warp, cmd, warp_curve_fn, split_at_t_fn):
+        self._view_box = view_box
+        self._warp = warp
+        self._cmd = cmd
+        self._warp_curve_fn = warp_curve_fn
+        self._split_at_t_fn = split_at_t_fn
+        self._max_pt_err = _max_pt_err(view_box)
 
-    assert cmd == "Q", cmd
-    assert len(args) == 4
+    def warp_callback(
+        self, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
+    ):
+        if cmd.upper() == "M":
+            return ((cmd, _warp_pt(self._warp, args)),)
 
-    max_err = _max_err(view_box)
+        assert cmd == self._cmd, f"{cmd} != {self._cmd}"
+        assert len(args) == num_args(cmd)
 
-    # build reference points (# based on arc length)
-    # unwarp: current was already warped, but we'll warp again when processing
-    initial_quad = (_unwarp_pt(warp, curr_xy), args[0:2], args[2:4])
-    ref_pts = tuple(_warp_pt(warp, pt) for pt in _ref_pts(view_box, initial_quad))
+        # build reference points (# based on arc length)
+        # unwarp: current was already warped, but we'll warp again when processing
+        initial_curve = (_unwarp_pt(self._warp, curr_xy),) + tuple(
+            args[i * 2 : (i + 1) * 2] for i in range(int(len(args) / 2))
+        )
+        ref_pts = tuple(
+            _warp_pt(self._warp, pt) for pt in _ref_pts(self._view_box, initial_curve)
+        )
 
-    frontier = [initial_quad]
-    acceptable = []
-    while frontier:
-        # take one down...
-        quad = frontier.pop(0)
-        # warp it around...
-        warped_quad = _warp_quad(warp, quad)
+        frontier = [initial_curve]
+        acceptable = []
+        while frontier:
+            # take one down...
+            curve = frontier.pop(0)
+            # warp it around...
+            warped_curve = self._warp_curve_fn(self._warp, curve)
 
-        # ...good enough?
-        warp_refs = _ref_pts(view_box, warped_quad)
-        ok = all(_dist(*_nearest(pt, ref_pts)) <= max_err for pt in warp_refs)
+            # ...good enough?
+            warp_refs = _ref_pts(self._view_box, warped_curve)
+            ok = all(
+                _dist(*_nearest(pt, ref_pts)) <= self._max_pt_err for pt in warp_refs
+            )
 
-        if ok:
-            acceptable.append(warped_quad)
-        else:
-            # Cut the pre-warp quad in half and try again
-            # Intuition: there are better guesses than half
-            splits = list(splitQuadraticAtT(*quad, 0.5))
-            assert len(splits) > 1
-            frontier = splits + frontier
-        # print(f"frontier {len(frontier)} accepted {len(acceptable)}; {len(warp_refs)} for warp")
+            if ok:
+                acceptable.append(warped_curve)
+            else:
+                # Cut the pre-warp curve in half and try again
+                # Intuition: there are better guesses than half
+                splits = list(self._split_at_t_fn(*curve, 0.5))
+                assert len(splits) > 1
+                frontier = splits + frontier
+            # print(
+            #     f"frontier {len(frontier)} accepted {len(acceptable)}; {len(warp_refs)} for warp"
+            # )
 
-    return tuple(("Q", sum(q[1:], ())) for q in acceptable)
+        return tuple((cmd, sum(q[1:], ())) for q in acceptable)
+
+
+def _quad_path_warp(view_box, warp):
+    return PathWarp(view_box, warp, "Q", _warp_quad, splitQuadraticAtT)
+
+
+def _cubic_path_warp(view_box, warp):
+    return PathWarp(view_box, warp, "C", _warp_cubic, splitCubicAtT)
 
 
 def _load_svg(argv):
@@ -441,14 +467,19 @@ def main(argv):
     box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
 
     warp = FlagWarp(box)
-    quad_max_err = _quad_max_err(svg.view_box())
-    quadratic_callback = partial(_quadratic_callback, max_err=quad_max_err)
-    warp_callback = partial(_warp_callback, svg.view_box(), warp)
+    if FLAGS.curve_order == 2:
+        prep_callback = partial(_quadratic_callback, _quad_max_err(svg.view_box()))
+        path_warp = _quad_path_warp(svg.view_box(), warp)
+    elif FLAGS.curve_order == 3:
+        prep_callback = _cubic_callback
+        path_warp = _cubic_path_warp(svg.view_box(), warp)
+    else:
+        raise ValueError("Specify a valid --curve_order")
 
     for shape in svg.shapes():
         shape.explicit_lines(inplace=True)
-        shape.walk(quadratic_callback)
-        shape.walk(warp_callback)
+        shape.walk(prep_callback)
+        shape.walk(path_warp.warp_callback)
         shape.round_floats(2, inplace=True)
 
     tree = svg.toetree()
