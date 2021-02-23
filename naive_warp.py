@@ -14,18 +14,27 @@ Usage:
   python naive_warp.py 1f1e6_1f1ec.svg
   python naive_warp.py noto-emoji/third_party/region-flags/svg/GB-WLS.svg --out_file GB-WLS-waved.svg
 """
+import sys
 from absl import app
 from absl import flags
-from cu2qu import curves_to_quadratic as cubic_to_quad
+from cu2qu import curve_to_quadratic as cubic_to_quad
 import enum
-from fontTools.misc.bezierTools import calcCubicArcLength, splitCubic, splitCubicAtT
+from fontTools.misc.bezierTools import (
+    calcCubicArcLength,
+    calcQuadraticArcLength,
+    splitCubic,
+    splitCubicAtT,
+    splitQuadraticAtT,
+)
 from functools import partial
 from lxml import etree
 from math import ceil, sqrt
 from pathlib import Path
+import pathops
 
-from picosvg.svg import SVG
 from picosvg.geometric_types import Rect
+from picosvg.svg import SVG
+from picosvg.svg_meta import num_args
 
 
 FLAGS = flags.FLAGS
@@ -33,6 +42,7 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("out_file", "-", "Output, - means stdout")
 flags.DEFINE_bool("debug_info", False, "Add potentially useful debug marks")
+flags.DEFINE_integer("curve_order", 0, "Must be one of 2, 3, quadratic or cubic")
 
 
 def line_pos(t, start, end):
@@ -73,6 +83,17 @@ def quad_pos(t, p0, p1, p2):
     return b
 
 
+def bez_pos(t, *points):
+    if len(points) == 2:
+        return line_pos(t, *points)
+    elif len(points) == 3:
+        return quad_pos(t, *points)
+    elif len(points) == 4:
+        return cubic_pos(t, *points)
+    else:
+        raise ValueError("Not enough points")
+
+
 def cubic_deriv_pos(t, p0, p1, p2, p3):
     return quad_pos(t, *cubic_deriv(p0, p1, p2, p3))
 
@@ -83,6 +104,28 @@ def clamp(minv, maxv, v):
     if v > maxv:
         return maxv
     return v
+
+
+def quad_from_three_points(p0, p1, p2):
+    # Construct a quadratic curve from three on-curve points: p0 and p2 being
+    # the end-points, and p1 the on-curve point at t=0.5.
+    # References:
+    # https://pomax.github.io/bezierinfo/#abc
+    # https://pomax.github.io/bezierinfo/#pointcurves
+
+    B = p1
+
+    u = 0.5  # projection ratio for t=0.5 and order n=2
+
+    # given the above ratio, C is always half-way between p0 and p2
+    C = (u * p0[0] + (1 - u) * p2[0], u * p0[1] + (1 - u) * p2[1])
+
+    s = 1.0  # ABC ratio for t=0.5 and order n=2
+
+    # compute the quadratic off-curve point A given B, C and ABC ratio
+    A = (B[0] + (B[0] - C[0]) / s, B[1] + (B[1] - C[1]) / s)
+
+    return (p0, A, p2)
 
 
 class FlagWarp:
@@ -162,29 +205,84 @@ def _cubic_callback(subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_a
     return (("C", args),)
 
 
+def _quadratic_callback(
+    max_err, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
+):
+    if cmd.upper() == "M":
+        return ((cmd, args),)
+
+    # Convert to quadratic if needed
+    if cmd.upper() == "Z":
+        # a line back to subpath start ... unless we are there already
+        if curr_xy == subpath_start:
+            return ()
+        cmd = "L"
+        args = subpath_start
+
+    if cmd == "L":
+        # line from curr_xy to args
+        assert len(args) == 2
+        end_xy = args
+
+        # quad ctl point 1/2 along
+        cmd = "Q"
+        args = (
+            *line_pos(0.5, curr_xy, end_xy),
+            *end_xy,
+        )
+
+    if cmd == "C":
+        cubic_points = [curr_xy] + [
+            tuple(args[i : i + 2]) for i in range(0, len(args), 2)
+        ]
+        quad_points = cubic_to_quad(cubic_points, max_err)
+        quad_segments = []
+        for (control_pt, end_pt) in pathops.decompose_quadratic_segment(
+            tuple(quad_points[1:])
+        ):
+            quad_segments.append(("Q", (*control_pt, *end_pt)))
+        return tuple(quad_segments)
+
+    if cmd != "Q":
+        raise ValueError(f"How do you quad {cmd}, {args}")
+
+    assert len(args) == 4
+
+    return (("Q", args),)
+
+
 def _dist(p0, p1):
     return sqrt(abs(p0[0] - p1[0]) ** 2 + abs(p0[1] - p1[1]))
 
 
-def points(cubic, num_seg=100):
+def points(curve, num_seg=100):
     # num_seq+1 coords on curve, equidistent in t (1/(num_seg) apart)
     # basically http://pomax.github.io/bezierjs/#getLUT
-    return tuple(cubic_pos(step / num_seg, *cubic) for step in range(0, num_seg + 1))
+    return tuple(bez_pos(step / num_seg, *curve) for step in range(0, num_seg + 1))
 
 
-def _max_err(view_box):
+def _max_pt_err(view_box):
     # TODO is this remotely reasonable?
     return _dist((0, 0), (view_box.w, view_box.h)) / 200
 
 
-def _ref_pts(view_box, cubic):
+def _quad_max_err(view_box):
+    min_length = min(view_box.w, view_box.h)
+    return min_length / 1000
+
+
+def _ref_pts(view_box, curve):
     # we award you one segment per 1000th of viewbox diagonal
     # 100th didn't seem to be enough
-
-    curve_len = calcCubicArcLength(*cubic)
+    if len(curve) == 4:
+        curve_len = calcCubicArcLength(*curve)
+    elif len(curve) == 3:
+        curve_len = calcQuadraticArcLength(*curve)
+    else:
+        raise AssertionError(len(curve))
     diagonal = _dist((0, 0), (view_box.w, view_box.h))
     num_seg = max(ceil(1000 * curve_len / diagonal), 10)
-    return points(cubic, num_seg)
+    return points(curve, num_seg)
 
 
 def _nearest(p0, pts):
@@ -195,38 +293,38 @@ def _nearest(p0, pts):
     return result
 
 
-def _cubic_nearest_range_t(cubic, curr_t=0, num_seg=100, min_t=0, max_t=1):
+def _bez_nearest_range_t(curve, curr_t=0, num_seg=100, min_t=0, max_t=1):
     min_t = clamp(0, 1, min_t)
     max_t = clamp(0, 1, max_t)
 
     curr_t = clamp(min_t, max_t, curr_t)
-    curr_dist = _dist(cubic_pos(cubic, curr_t))
+    curr_dist = _dist(bez_pos(curr_t, *curve))
     for step in range(0, num_seg + 1):
         try_t = clamp(min_t, max_t, min_t + step * (max_t - min_t) / num_seg)
-        try_dist = _dist(cubic_pos(cubic, curr_t), cubic_pos(cubic, try_t))
+        try_dist = _dist(bez_pos(curr_t, *curve), bez_pos(try_t, *curve))
         if try_dist < curr_dist:
             curr_t = try_t
             curr_dist = try_dist
     return curr_t
 
 
-def _cubic_nearest_t(cubic, pt):
+def _bez_nearest_t(curve, pt):
     # TODO: kurbo has a real implementation but this will do for experimentation
     # inspired by http://pomax.github.io/bezierjs/#project
 
     # try over full range then try to refine answer
-    curr_t = _cubic_nearest_range_t(cubic, curr_t=0, num_seg=100)
+    curr_t = _bez_nearest_range_t(curve, curr_t=0, num_seg=100)
 
     # we could repeat this as long as answer improves sufficiently?
-    curr_t = _cubic_nearest_range_t(
-        cubic, curr_t=0, num_seg=100, min_t=curr_t - 1 / 100, max_t=curr_t + 1 / 100
+    curr_t = _bez_nearest_range_t(
+        curve, curr_t=0, num_seg=100, min_t=curr_t - 1 / 100, max_t=curr_t + 1 / 100
     )
 
     return curr_t
 
 
-def _cubic_nearest(cubic, pt):
-    return cubic_pos(cubic, _cubic_nearest_t(cubic, pt))
+def _bez_nearest(curve, pt):
+    return bez_pos(_bez_nearest_t(curve, pt), *curve)
 
 
 def _warp_pt(warp, pt):
@@ -240,48 +338,78 @@ def _unwarp_pt(warp, pt):
 
 
 def _warp_cubic(warp, cubic):
+    assert len(cubic) == 4
     return tuple(_warp_pt(warp, pt) for pt in cubic)
 
 
-def _warp_callback(
-    view_box, warp, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
-):
-    if cmd.upper() == "M":
-        return ((cmd, _warp_pt(warp, args)),)
+def _warp_quad(warp, quad):
+    assert len(quad) == 3
+    quad_pts = (quad[0], quad_pos(0.5, *quad), quad[2])
+    return quad_from_three_points(*(_warp_pt(warp, p) for p in quad_pts))
 
-    assert cmd == "C", cmd
-    assert len(args) == 6
 
-    max_err = _max_err(view_box)
+class PathWarp:
+    def __init__(self, view_box, warp, cmd, warp_curve_fn, split_at_t_fn):
+        self._view_box = view_box
+        self._warp = warp
+        self._cmd = cmd
+        self._warp_curve_fn = warp_curve_fn
+        self._split_at_t_fn = split_at_t_fn
+        self._max_pt_err = _max_pt_err(view_box)
 
-    # build reference points (# based on arc length)
-    # unwarp: current was already warped, but we'll warp again when processing
-    initial_cubic = (_unwarp_pt(warp, curr_xy), args[0:2], args[2:4], args[4:6])
-    ref_pts = tuple(_warp_pt(warp, pt) for pt in _ref_pts(view_box, initial_cubic))
+    def warp_callback(
+        self, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
+    ):
+        if cmd.upper() == "M":
+            return ((cmd, _warp_pt(self._warp, args)),)
 
-    frontier = [initial_cubic]
-    acceptable = []
-    while frontier:
-        # take one down...
-        cubic = frontier.pop(0)
-        # warp it around...
-        warped_cubic = _warp_cubic(warp, cubic)
+        assert cmd == self._cmd, f"{cmd} != {self._cmd}"
+        assert len(args) == num_args(cmd)
 
-        # ...good enough?
-        warp_refs = _ref_pts(view_box, warped_cubic)
-        ok = all(_dist(*_nearest(pt, ref_pts)) <= max_err for pt in warp_refs)
+        # build reference points (# based on arc length)
+        # unwarp: current was already warped, but we'll warp again when processing
+        initial_curve = (_unwarp_pt(self._warp, curr_xy),) + tuple(
+            args[i * 2 : (i + 1) * 2] for i in range(int(len(args) / 2))
+        )
+        ref_pts = tuple(
+            _warp_pt(self._warp, pt) for pt in _ref_pts(self._view_box, initial_curve)
+        )
 
-        if ok:
-            acceptable.append(warped_cubic)
-        else:
-            # Cut the pre-warp cubic in half and try again
-            # Intuition: there are better guesses than half
-            splits = list(splitCubicAtT(*cubic, 0.5))
-            assert len(splits) > 1
-            frontier = splits + frontier
-        # print(f"frontier {len(frontier)} accepted {len(acceptable)}; {len(warp_refs)} for warp")
+        frontier = [initial_curve]
+        acceptable = []
+        while frontier:
+            # take one down...
+            curve = frontier.pop(0)
+            # warp it around...
+            warped_curve = self._warp_curve_fn(self._warp, curve)
 
-    return tuple(("C", sum(cubic[1:], ())) for cubic in acceptable)
+            # ...good enough?
+            warp_refs = _ref_pts(self._view_box, warped_curve)
+            ok = all(
+                _dist(*_nearest(pt, ref_pts)) <= self._max_pt_err for pt in warp_refs
+            )
+
+            if ok:
+                acceptable.append(warped_curve)
+            else:
+                # Cut the pre-warp curve in half and try again
+                # Intuition: there are better guesses than half
+                splits = list(self._split_at_t_fn(*curve, 0.5))
+                assert len(splits) > 1
+                frontier = splits + frontier
+            # print(
+            #     f"frontier {len(frontier)} accepted {len(acceptable)}; {len(warp_refs)} for warp"
+            # )
+
+        return tuple((cmd, sum(q[1:], ())) for q in acceptable)
+
+
+def _quad_path_warp(view_box, warp):
+    return PathWarp(view_box, warp, "Q", _warp_quad, splitQuadraticAtT)
+
+
+def _cubic_path_warp(view_box, warp):
+    return PathWarp(view_box, warp, "C", _warp_cubic, splitCubicAtT)
 
 
 def _load_svg(argv):
@@ -339,13 +467,19 @@ def main(argv):
     box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
 
     warp = FlagWarp(box)
-    cubic_callback = partial(_cubic_callback)
-    warp_callback = partial(_warp_callback, svg.view_box(), warp)
+    if FLAGS.curve_order == 2:
+        prep_callback = partial(_quadratic_callback, _quad_max_err(svg.view_box()))
+        path_warp = _quad_path_warp(svg.view_box(), warp)
+    elif FLAGS.curve_order == 3:
+        prep_callback = _cubic_callback
+        path_warp = _cubic_path_warp(svg.view_box(), warp)
+    else:
+        raise ValueError("Specify a valid --curve_order")
 
     for shape in svg.shapes():
         shape.explicit_lines(inplace=True)
-        shape.walk(cubic_callback)
-        shape.walk(warp_callback)
+        shape.walk(prep_callback)
+        shape.walk(path_warp.warp_callback)
         shape.round_floats(2, inplace=True)
 
     tree = svg.toetree()
