@@ -135,20 +135,33 @@ def visualizeWarp(initial_cubics, warp_cubic_fn, warp_pt_fn, num_seg=10, draw_ct
     for cubic in initial_cubics:
         drawPath(bezOfCubics((cubic,)))
 
-    stroke(0.75, 0.5, 0.75)
-    strokeWidth(0.4)
     for warp_cubic in warped_cubics:
+        fill(None)
+        stroke(0.3, 0.3, 0.75)
+        strokeWidth(0.5)
         drawPath(bezOfCubics((warp_cubic,)))
-        if draw_ctls:
+        if draw_ctls:        
+            fill(None)
+            stroke(0.6, 0.6, 0.6)
+            strokeWidth(1)
             line(*warp_cubic[0:2])
             line(*warp_cubic[2:4])
+            
+            fill(0, 0, 0)
+            stroke(None)
+            dot(warp_cubic[0])
 
+    fill(None)
+    stroke(0.75, 0.5, 0.75)
+    strokeWidth(0.25)
     for cubic in initial_cubics:
         pts = tuple(warp_pt_fn(p) for p in points(cubic, 100))
         for i in range(1, len(pts)):
             line(pts[i-1], pts[i])
         for pt in pts:
             dot(pt, radius=1)
+    
+    
 
 def fancyWarpPt(pt):
     mag_scale = 10
@@ -169,17 +182,25 @@ def fancyWarpViaHermite(cubic):
 ##################################################
 # simple hermite warp test
 ##################################################
-simple_cubics = (
-    (Point(50,75), Point(100,75), Point(150,75), Point(200,75)),
-)
+for i in range(1, 5 + 1):
+    simple_cubics = ((
+        Point(50,35 * i),
+        Point(100,35 * i),
+        Point(150,35 * i),
+        Point(200,35 * i)
+    ),)
 
-visualizeWarp(
-    simple_cubics,
-    lambda cubic: tuple(fancyWarpPt(pt) for pt in cubic),
-    fancyWarpPt,
-    num_seg=1,
-    draw_ctls=True,
-)
+    num_seg=(i-1) * 5 + 1
+    fill(0,0,0)
+    stroke(None)
+    text(f"{num_seg} segment(s)", (25, 35 * i - 17))
+    visualizeWarp(
+        simple_cubics,
+        lambda cubic: tuple(fancyWarpPt(pt) for pt in cubic),
+        fancyWarpPt,
+        num_seg=num_seg,
+        draw_ctls=True,
+    )
 
 ##################################################
 # fancy warp test
