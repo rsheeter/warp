@@ -28,7 +28,7 @@ from fontTools.misc.bezierTools import (
 )
 from functools import partial
 from lxml import etree
-from math import ceil, sqrt
+from math import ceil, floor, sqrt
 from pathlib import Path
 import pathops
 
@@ -36,13 +36,22 @@ from picosvg.geometric_types import Rect
 from picosvg.svg import SVG
 from picosvg.svg_meta import num_args
 
+sys.path.append("fitCurves")
+import numpy as np
+from fitCurves import fitCurve
+
+
+DEFAULT_PRECISION = 200
 
 FLAGS = flags.FLAGS
 
-
 flags.DEFINE_string("out_file", "-", "Output, - means stdout")
 flags.DEFINE_bool("debug_info", False, "Add potentially useful debug marks")
+flags.DEFINE_bool("fit_cubic", False, "Use Schneider's curve-fitting algorithm")
 flags.DEFINE_integer("curve_order", 0, "Must be one of 2, 3, quadratic or cubic")
+flags.DEFINE_float(
+    "precision", DEFAULT_PRECISION, "Default: 1/200th of the viewbox diagonal"
+)
 
 
 def line_pos(t, start, end):
@@ -133,13 +142,13 @@ class FlagWarp:
         # cubic start, control, control, end
         # based on Noto Emoji waveflag.c warp
         y_scale = box.w / 128
-        self.minx = int(box.x)
-        self.maxx = int(box.x + box.w)
+        self.minx = floor(box.x)
+        self.maxx = ceil(box.x + box.w)
         self.warp = (
-            (int(box.x), 0),
-            (int(self.minx + self.maxx / 3), int(-21 * y_scale)),
-            (int(self.minx + 2 * self.maxx / 3), int(13 * y_scale)),
-            (int(self.maxx), int(-8 * y_scale)),
+            (self.minx, 0),
+            (self.minx + self.maxx / 3, -21 * y_scale),
+            (self.minx + 2 * self.maxx / 3, 13 * y_scale),
+            (self.maxx, -8 * y_scale),
         )
         self.miny = min(y for _, y in self.warp)
         self.maxy = max(y for _, y in self.warp)
@@ -261,9 +270,9 @@ def points(curve, num_seg=100):
     return tuple(bez_pos(step / num_seg, *curve) for step in range(0, num_seg + 1))
 
 
-def _max_pt_err(view_box):
+def _max_pt_err(view_box, precision=DEFAULT_PRECISION):
     # TODO is this remotely reasonable?
-    return _dist((0, 0), (view_box.w, view_box.h)) / 200
+    return _dist((0, 0), (view_box.w, view_box.h)) / precision
 
 
 def _quad_max_err(view_box):
@@ -349,13 +358,13 @@ def _warp_quad(warp, quad):
 
 
 class PathWarp:
-    def __init__(self, view_box, warp, cmd, warp_curve_fn, split_at_t_fn):
+    def __init__(self, view_box, warp, cmd, warp_curve_fn, split_at_t_fn, precision):
         self._view_box = view_box
         self._warp = warp
         self._cmd = cmd
         self._warp_curve_fn = warp_curve_fn
         self._split_at_t_fn = split_at_t_fn
-        self._max_pt_err = _max_pt_err(view_box)
+        self._max_pt_err = _max_pt_err(view_box, precision)
 
     def warp_callback(
         self, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
@@ -404,12 +413,47 @@ class PathWarp:
         return tuple((cmd, sum(q[1:], ())) for q in acceptable)
 
 
-def _quad_path_warp(view_box, warp):
-    return PathWarp(view_box, warp, "Q", _warp_quad, splitQuadraticAtT)
+def _quad_path_warp(view_box, warp, precision):
+    return PathWarp(view_box, warp, "Q", _warp_quad, splitQuadraticAtT, precision)
 
 
-def _cubic_path_warp(view_box, warp):
-    return PathWarp(view_box, warp, "C", _warp_cubic, splitCubicAtT)
+def _cubic_path_warp(view_box, warp, precision):
+    return PathWarp(view_box, warp, "C", _warp_cubic, splitCubicAtT, precision)
+
+
+class FitCubicPathWarp:
+    def __init__(self, view_box, warp, precision):
+        self._view_box = view_box
+        self._warp = warp
+        # fitCurves.py uses squared distances
+        self._max_err = _max_pt_err(view_box, precision) ** 2
+
+    def warp_callback(
+        self, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
+    ):
+        if cmd.upper() == "M":
+            return ((cmd, _warp_pt(self._warp, args)),)
+
+        assert cmd == "C", f"{cmd} != {self._cmd}"
+        assert len(args) == num_args(cmd)
+
+        # build reference points (# based on arc length)
+        # unwarp: current was already warped, but we'll warp again when processing
+        initial_curve = (_unwarp_pt(self._warp, curr_xy),) + tuple(
+            args[i * 2 : (i + 1) * 2] for i in range(int(len(args) / 2))
+        )
+        warped_pts = np.array(
+            [_warp_pt(self._warp, pt) for pt in _ref_pts(self._view_box, initial_curve)]
+        )
+
+        # sampled points are evenly spaced over t, we assume they keep the same
+        # parametrization even after warping.
+        # TODO: Is that always the case, or we just got lucky with our flag warp?
+        ts = np.linspace(0.0, 1.0, len(warped_pts))
+
+        warped_curves = fitCurve(warped_pts, self._max_err, parameters=ts)
+
+        return tuple((cmd, sum((tuple(p) for p in c[1:]), ())) for c in warped_curves)
 
 
 def _load_svg(argv):
@@ -467,14 +511,20 @@ def main(argv):
     box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
 
     warp = FlagWarp(box)
-    if FLAGS.curve_order == 2:
-        prep_callback = partial(_quadratic_callback, _quad_max_err(svg.view_box()))
-        path_warp = _quad_path_warp(svg.view_box(), warp)
-    elif FLAGS.curve_order == 3:
+    precision = FLAGS.precision
+
+    if FLAGS.fit_cubic:
         prep_callback = _cubic_callback
-        path_warp = _cubic_path_warp(svg.view_box(), warp)
+        path_warp = FitCubicPathWarp(svg.view_box(), warp, precision)
     else:
-        raise ValueError("Specify a valid --curve_order")
+        if FLAGS.curve_order == 2:
+            prep_callback = partial(_quadratic_callback, _quad_max_err(svg.view_box()))
+            path_warp = _quad_path_warp(svg.view_box(), warp, precision)
+        elif FLAGS.curve_order == 3:
+            prep_callback = _cubic_callback
+            path_warp = _cubic_path_warp(svg.view_box(), warp, precision)
+        else:
+            raise ValueError("Specify a valid --curve_order")
 
     for shape in svg.shapes():
         shape.explicit_lines(inplace=True)
