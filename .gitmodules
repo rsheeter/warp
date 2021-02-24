@@ -1,3 +1,7 @@
 [submodule "noto-emoji"]
 	path = noto-emoji
 	url = git@github.com:googlefonts/noto-emoji.git
+[submodule "fitCurves"]
+	path = fitCurves
+	url = https://github.com/anthrotype/fitCurves
+	branch = known-params
