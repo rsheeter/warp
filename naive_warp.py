@@ -512,7 +512,7 @@ def main(argv):
     warp = FlagWarp(box)
     precision = FLAGS.precision
 
-    print(f"{FLAGS.mode} mode...")
+    print(f"{FLAGS.mode} mode...", file=sys.stderr)
 
     if FLAGS.mode == "schneider_cubic":
         prep_callback = _cubic_callback
