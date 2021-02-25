@@ -37,8 +37,8 @@ class Point(NamedTuple):
     @staticmethod
     def tan_center(points: Sequence["Point"]) -> "Vector":
         assert len(points) == 3
-        v1 = Vector.p0_to_p1(d[1], d[0])
-        v2 = Vector.p0_to_p1(d[2], d[1])
+        v1 = Vector.p0_to_p1(points[1], points[0])
+        v2 = Vector.p0_to_p1(points[2], points[1])
         tHatCenter = Vector((v1.x + v2.x) / 2, (v1.y + v2.y) / 2)
         return tHatCenter.normalize()
 
@@ -76,7 +76,7 @@ class Vector(Point):
 
 def degree(curve):
     deg = len(curve) - 1
-    assert deg in range(2, 4), f"we don't expect to handle degrees outside [2,3]: {deg}"
+    assert deg in range(1, 4), f"we don't expect to handle degrees outside [1,3]: {deg}"
     return deg
 
 
@@ -319,15 +319,15 @@ def _fit_cubics(
             u_prime = _reparameterize(points, first, last, u, curve)
             curve = _generate_bezier(points, first, last, u_prime, tan_left, tan_right)
             max_err, split_pt = _max_error(points, first, last, curve, u_prime)
-            if max_error < max_squared_error:
+            if max_err < max_squared_error:
                 return (curve,)
         u = u_prime
 
     # Fitting failed -- split at max error point and fit recursively
-    tan_center = Point.tan_center(points[split_pt - 1 : split_pt + 1])
+    tan_center = Point.tan_center(points[split_pt - 1 : split_pt + 2])
     return (
-        _fit_cubics(points, first, split_pt, tan_left, tan_center, max_err),
-        _fit_cubics(points, split_pt, last, tan_center.negate(), tan_right, max_err),
+        *_fit_cubics(points, first, split_pt, tan_left, tan_center, max_err),
+        *_fit_cubics(points, split_pt, last, tan_center.negate(), tan_right, max_err),
     )
 
 
