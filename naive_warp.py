@@ -27,6 +27,7 @@ from fontTools.misc.bezierTools import (
     splitQuadraticAtT,
 )
 from functools import partial
+from gg_fit_curve import fit_cubics
 from lxml import etree
 from math import ceil, floor, sqrt
 from pathlib import Path
@@ -36,9 +37,7 @@ from picosvg.geometric_types import Rect
 from picosvg.svg import SVG
 from picosvg.svg_meta import num_args
 
-sys.path.append("fitCurves")
-import numpy as np
-from fitCurves import fitCurve
+
 
 
 DEFAULT_PRECISION = 200
@@ -47,8 +46,9 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("out_file", "-", "Output, - means stdout")
 flags.DEFINE_bool("debug_info", False, "Add potentially useful debug marks")
-flags.DEFINE_bool("fit_cubic", False, "Use Schneider's curve-fitting algorithm")
-flags.DEFINE_integer("curve_order", 0, "Must be one of 2, 3, quadratic or cubic")
+flags.DEFINE_enum('mode', 'schneider_cubic',
+                  ['schneider_cubic', 'quad', 'dumb_cubic'],
+                  'How to generate final curves.')
 flags.DEFINE_float(
     "precision", DEFAULT_PRECISION, "Default: 1/200th of the viewbox diagonal"
 )
@@ -442,16 +442,11 @@ class FitCubicPathWarp:
         initial_curve = (_unwarp_pt(self._warp, curr_xy),) + tuple(
             args[i * 2 : (i + 1) * 2] for i in range(int(len(args) / 2))
         )
-        warped_pts = np.array(
-            [_warp_pt(self._warp, pt) for pt in _ref_pts(self._view_box, initial_curve)]
+        warped_pts = tuple(
+            _warp_pt(self._warp, pt) for pt in _ref_pts(self._view_box, initial_curve)
         )
 
-        # sampled points are evenly spaced over t, we assume they keep the same
-        # parametrization even after warping.
-        # TODO: Is that always the case, or we just got lucky with our flag warp?
-        ts = np.linspace(0.0, 1.0, len(warped_pts))
-
-        warped_curves = fitCurve(warped_pts, self._max_err, parameters=ts)
+        warped_curves = fit_cubics(warped_pts, self._max_err)
 
         return tuple((cmd, sum((tuple(p) for p in c[1:]), ())) for c in warped_curves)
 
@@ -513,18 +508,19 @@ def main(argv):
     warp = FlagWarp(box)
     precision = FLAGS.precision
 
-    if FLAGS.fit_cubic:
+    print(f"{FLAGS.mode} mode...")
+
+    if FLAGS.mode == "schneider_cubic":
         prep_callback = _cubic_callback
         path_warp = FitCubicPathWarp(svg.view_box(), warp, precision)
+    elif FLAGS.mode == "quad":
+        prep_callback = partial(_quadratic_callback, _quad_max_err(svg.view_box()))
+        path_warp = _quad_path_warp(svg.view_box(), warp, precision)
+    elif FLAGS.mode == "dumb_cubic":
+        prep_callback = _cubic_callback
+        path_warp = _cubic_path_warp(svg.view_box(), warp, precision)
     else:
-        if FLAGS.curve_order == 2:
-            prep_callback = partial(_quadratic_callback, _quad_max_err(svg.view_box()))
-            path_warp = _quad_path_warp(svg.view_box(), warp, precision)
-        elif FLAGS.curve_order == 3:
-            prep_callback = _cubic_callback
-            path_warp = _cubic_path_warp(svg.view_box(), warp, precision)
-        else:
-            raise ValueError("Specify a valid --curve_order")
+        raise ValueError("Specify a valid --mode")
 
     for shape in svg.shapes():
         shape.explicit_lines(inplace=True)
