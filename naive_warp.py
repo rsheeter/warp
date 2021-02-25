@@ -446,7 +446,10 @@ class FitCubicPathWarp:
             _warp_pt(self._warp, pt) for pt in _ref_pts(self._view_box, initial_curve)
         )
 
-        warped_curves = fit_cubics(warped_pts, self._max_err)
+        # sampled points are evenly spaced over time, we want them to keep the same
+        # parametrization after warping. E.g. the point at t=0.5 before warping will
+        # still be located at t=0.5 on the warped curve.
+        warped_curves = fit_cubics(warped_pts, self._max_err, uniform_parameters=True)
 
         return tuple((cmd, sum((tuple(p) for p in c[1:]), ())) for c in warped_curves)
 

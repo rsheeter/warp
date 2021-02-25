@@ -283,7 +283,13 @@ def _max_error(points, first, last, curve, u) -> Tuple[float, int]:
 
 # Fit a Bezier curve to a (sub)set of digitized points
 def _fit_cubics(
-    points, first, last, tan_left, tan_right, max_squared_error
+    points,
+    first,
+    last,
+    tan_left,
+    tan_right,
+    max_squared_error,
+    uniform_parameters=False,
 ) -> Tuple[CubicBezier]:
     iteration_error = max_squared_error * 4.0
     max_iterations = 4  # Max times to try iterating
@@ -304,7 +310,15 @@ def _fit_cubics(
         )
 
     #  Parameterize points, and attempt to fit curve
-    u = _chord_length_parameterize(points, first, last)
+    if not uniform_parameters:
+        u = _chord_length_parameterize(points, first, last)
+    else:
+        # Special case when we know in advance points are placed at even t intervals.
+        # The algorithm converges earlier, fitting is more precise and requires
+        # less splits than when guessing ts with chord-length parametrization.
+        u = [x / (num_pts - 1) for x in range(num_pts)]
+    assert len(u) == num_pts
+
     curve = _generate_bezier(points, first, last, u, tan_left, tan_right)
 
     # Find max deviation of points to fitted curve
@@ -326,8 +340,18 @@ def _fit_cubics(
     # Fitting failed -- split at max error point and fit recursively
     tan_center = Point.tan_center(points[split_pt - 1 : split_pt + 2])
     return (
-        *_fit_cubics(points, first, split_pt, tan_left, tan_center, max_err),
-        *_fit_cubics(points, split_pt, last, tan_center.negate(), tan_right, max_err),
+        *_fit_cubics(
+            points, first, split_pt, tan_left, tan_center, max_err, uniform_parameters
+        ),
+        *_fit_cubics(
+            points,
+            split_pt,
+            last,
+            tan_center.negate(),
+            tan_right,
+            max_err,
+            uniform_parameters,
+        ),
     )
 
 
@@ -339,13 +363,21 @@ def _as_point(pt):
     raise ValueError(f"{type(pt)} does not convert to Point")
 
 
-def fit_cubics(points, max_squared_error) -> Tuple[CubicBezier]:
+def fit_cubics(
+    points, max_squared_error, uniform_parameters=False
+) -> Tuple[CubicBezier]:
     assert len(points) > 2, "No fun with < 3 points"
     points = tuple(_as_point(pt) for pt in points)
     tan_left = Point.tan_left(points)
     tan_right = Point.tan_right(points)
     return _fit_cubics(
-        points, 0, len(points) - 1, tan_left, tan_right, max_squared_error
+        points,
+        0,
+        len(points) - 1,
+        tan_left,
+        tan_right,
+        max_squared_error,
+        uniform_parameters,
     )
 
 
