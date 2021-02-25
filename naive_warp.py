@@ -38,17 +38,18 @@ from picosvg.svg import SVG
 from picosvg.svg_meta import num_args
 
 
-
-
 DEFAULT_PRECISION = 200
 
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("out_file", "-", "Output, - means stdout")
 flags.DEFINE_bool("debug_info", False, "Add potentially useful debug marks")
-flags.DEFINE_enum('mode', 'schneider_cubic',
-                  ['schneider_cubic', 'quad', 'dumb_cubic'],
-                  'How to generate final curves.')
+flags.DEFINE_enum(
+    "mode",
+    "schneider_cubic",
+    ["schneider_cubic", "quad", "dumb_cubic"],
+    "How to generate final curves.",
+)
 flags.DEFINE_float(
     "precision", DEFAULT_PRECISION, "Default: 1/200th of the viewbox diagonal"
 )
