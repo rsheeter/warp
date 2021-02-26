@@ -3,75 +3,39 @@ Python transcription of https://github.com/erich666/GraphicsGems/blob/master/gem
 as it existed 2/24/2020.
 """
 from math import sqrt
+from picosvg.geometric_types import Point, Vector
 from typing import NamedTuple, Sequence, Tuple
-
-
-class Point(NamedTuple):
-    x: float
-    y: float
-
-    def magnitude(self) -> float:
-        return sqrt(self.x * self.x + self.y * self.y)
-
-    # V2AddII; it's weird this works on vectors...
-    def add(self, other) -> "Point":
-        return Point(self.x + other.x, self.y + other.y)
-
-    # V2SubII
-    def sub(self, other) -> "Point":
-        return Point(self.x - other.x, self.y - other.y)
-
-    def scale(self, s: float) -> "Point":
-        return Point(self.x * s, self.y * s)
-
-    @staticmethod
-    def tan_left(points: Sequence["Point"]) -> "Vector":
-        assert len(points) > 1
-        return Vector.p0_to_p1(points[0], points[1]).normalize()
-
-    @staticmethod
-    def tan_right(points: Sequence["Point"]) -> "Vector":
-        assert len(points) > 1
-        return Vector.p0_to_p1(points[-1], points[-2]).normalize()
-
-    @staticmethod
-    def tan_center(points: Sequence["Point"]) -> "Vector":
-        assert len(points) == 3
-        v1 = Vector.p0_to_p1(points[1], points[0])
-        v2 = Vector.p0_to_p1(points[2], points[1])
-        tHatCenter = Vector((v1.x + v2.x) / 2, (v1.y + v2.y) / 2)
-        return tHatCenter.normalize()
 
 
 CubicBezier = Tuple[Point, Point, Point, Point]
 
 
-class Vector(Point):
-    def squared_length(self) -> float:
-        return self.x * self.x + self.y * self.y
+def _unit(v: Vector) -> Vector:
+    v = v.unit()
+    if v is None:
+        v = Vector()
+    return v
 
-    def length(self) -> float:
-        return sqrt(self.squared_length())
 
-    def normalize(self) -> "Vector":
-        length = self.length()
-        x, y = 0.0, 0.0
-        if length != 0.0:
-            x = self.x / length
-            y = self.y / length
+def _squared_length(v: Vector) -> float:
+    return v.x * v.x + v.y * v.y
 
-        return Vector(x, y)
 
-    def negate(self) -> "Vector":
-        return Vector(-self.x, -self.y)
+def _tan_left(points: Sequence[Point]) -> Vector:
+    assert len(points) > 1
+    return _unit(points[1] - points[0])
 
-    @staticmethod
-    def p0_to_p1(p0: Point, p1: Point) -> "Vector":
-        return Vector(*(p1.sub(p0)))
 
-    @staticmethod
-    def dot_product(v0: "Vector", v1: "Vector") -> float:
-        return v0.x * v1.x + v0.y * v1.y
+def _tan_right(points: Sequence[Point]) -> Vector:
+    assert len(points) > 1
+    return _unit(points[-2] - points[-1])
+
+
+def _tan_center(points: Sequence[Point]) -> Vector:
+    assert len(points) == 3
+    v1 = points[0] - points[1]
+    v2 = points[1] - points[2]
+    return _unit(Vector((v1.x + v2.x) / 2, (v1.y + v2.y) / 2))
 
 
 def degree(curve):
@@ -108,7 +72,6 @@ def newton_raphson_root(curve, pt, u):
     curve_pt = point_at_t(curve, u)
 
     # Generate control vertices for curve'
-    # TODO == cubic derivative; should just have derivative(curve)?
     curve_prime = derivative(curve)
 
     # Generate control vertices for curve''
@@ -180,7 +143,7 @@ def _generate_bezier(points, first, last, u_prime, tan_left, tan_right) -> Cubic
 
     # Precomputed rhs for eqn; Compute the A's
     A = tuple(
-        (tan_left.scale(_B1(u_prime[i])), tan_right.scale(_B2(u_prime[i])))
+        (tan_left * _B1(u_prime[i]), tan_right * _B2(u_prime[i]))
         for i in range(num_pts)
     )
 
@@ -189,28 +152,24 @@ def _generate_bezier(points, first, last, u_prime, tan_left, tan_right) -> Cubic
     X = [0.0, 0.0]
 
     for i in range(num_pts):
-        C[0][0] += Vector.dot_product(A[i][0], A[i][0])
-        C[0][1] += Vector.dot_product(A[i][0], A[i][1])
+        C[0][0] += A[i][0].dot(A[i][0])
+        C[0][1] += A[i][0].dot(A[i][1])
 
         C[1][0] = C[0][1]
-        C[1][1] += Vector.dot_product(A[i][1], A[i][1])
+        C[1][1] += A[i][1].dot(A[i][1])
 
-        vec_tmp = points[first + i].sub(
-            points[first]
-            .scale(_B0(u_prime[i]))
-            .add(
-                points[first]
-                .scale(_B1(u_prime[i]))
-                .add(
-                    points[last]
-                    .scale(_B2(u_prime[i]))
-                    .add(points[last].scale(_B3(u_prime[i])))
-                )
-            )
+        vec_first = Vector(*points[first])
+        vec_last = Vector(*points[last])
+
+        vec_tmp = Vector(*points[first + i]) - (
+            vec_first * _B0(u_prime[i])
+            + vec_first * _B1(u_prime[i])
+            + vec_last * _B2(u_prime[i])
+            + vec_last * _B3(u_prime[i])
         )
 
-        X[0] += Vector.dot_product(A[i][0], vec_tmp)
-        X[1] += Vector.dot_product(A[i][1], vec_tmp)
+        X[0] += A[i][0].dot(vec_tmp)
+        X[1] += A[i][1].dot(vec_tmp)
 
     # Compute the determinants of C and X
     det_C0_C1 = C[0][0] * C[1][1] - C[1][0] * C[0][1]
@@ -226,15 +185,15 @@ def _generate_bezier(points, first, last, u_prime, tan_left, tan_right) -> Cubic
     # If alpha negative, use the Wu/Barsky heuristic (see text)
     # (if alpha is 0, you get coincident control points that lead to
     # divide by zero in any subsequent NewtonRaphsonRootFind() call.
-    seg_length = Vector.p0_to_p1(points[first], points[last]).length()
+    seg_length = (points[last] - points[first]).norm()
     epsilon = 1.0e-6 * seg_length
     if alpha_l < epsilon or alpha_r < epsilon:
         # fall back on standard (probably inaccurate) formula, and subdivide further if needed.
         dist = seg_length / 3.0
         return (
             points[first],
-            points[first].add(tan_left.scale(dist)),
-            points[last].add(tan_right.scale(dist)),
+            points[first] + tan_left * dist,
+            points[last] + tan_right * dist,
             points[last],
         )
 
@@ -244,8 +203,8 @@ def _generate_bezier(points, first, last, u_prime, tan_left, tan_right) -> Cubic
     #  on the tangent vectors, left and right, respectively
     return (
         points[first],
-        points[first].add(tan_left.scale(alpha_l)),
-        points[last].add(tan_right.scale(alpha_r)),
+        points[first] + tan_left * alpha_l,
+        points[last] + tan_right * alpha_r,
         points[last],
     )
 
@@ -256,9 +215,7 @@ def _generate_bezier(points, first, last, u_prime, tan_left, tan_right) -> Cubic
 def _chord_length_parameterize(points, first, last) -> Sequence[float]:
     u = [0.0] * (last - first + 1)
     for i in range(first + 1, last + 1):
-        u[i - first] = (
-            u[i - first - 1] + Vector.p0_to_p1(points[i - 1], points[i]).length()
-        )
+        u[i - first] = u[i - first - 1] + (points[i] - points[i - 1]).norm()
 
     for i in range(first + 1, last + 1):
         u[i - first] = u[i - first] / u[last - first]
@@ -273,7 +230,7 @@ def _max_error(points, first, last, curve, u) -> Tuple[float, int]:
     split_at = (last - first + 1) // 2
     for i in range(first + 1, last):
         pt = point_at_t(curve, u[i - first])
-        dist = Vector.p0_to_p1(points[i], pt).squared_length()
+        dist = _squared_length(pt - points[i])
         if dist > max_err:
             max_err = dist
             split_at = i
@@ -338,7 +295,7 @@ def _fit_cubics(
         u = u_prime
 
     # Fitting failed -- split at max error point and fit recursively
-    tan_center = Point.tan_center(points[split_pt - 1 : split_pt + 2])
+    tan_center = _tan_center(points[split_pt - 1 : split_pt + 2])
     return (
         *_fit_cubics(
             points, first, split_pt, tan_left, tan_center, max_err, uniform_parameters
@@ -368,8 +325,8 @@ def fit_cubics(
 ) -> Tuple[CubicBezier]:
     assert len(points) > 2, "No fun with < 3 points"
     points = tuple(_as_point(pt) for pt in points)
-    tan_left = Point.tan_left(points)
-    tan_right = Point.tan_right(points)
+    tan_left = _tan_left(points)
+    tan_right = _tan_right(points)
     return _fit_cubics(
         points,
         0,

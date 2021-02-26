@@ -44,29 +44,30 @@ def rel_build(path: Path) -> Path:
 
 
 def main(_) -> None:
-  build_dir().mkdir(exist_ok=True)
-  out_dir().mkdir(exist_ok=True)
-  build_file = build_dir() / "build.ninja"
-  with open(build_file, "w") as f:
-    nw = ninja_syntax.Writer(f)
+    build_dir().mkdir(exist_ok=True)
+    out_dir().mkdir(exist_ok=True)
+    build_file = build_dir() / "build.ninja"
+    with open(build_file, "w") as f:
+        nw = ninja_syntax.Writer(f)
 
-    util_path = rel_build(Path("naive_warp.py"))
-    nw.rule(
-        f"waveflag",
-        f"python {util_path} --curve_order 2 --out_file $out $in"
-    )
-    nw.newline()
+        util_path = rel_build(Path("naive_warp.py"))
+        nw.rule(f"waveflag", f"python {util_path} --curve_order 2 --out_file $out $in")
+        nw.newline()
 
-    with open("wave_list.txt") as f:
-      for line in f:
-        src_svg, wave_name = line.split(" ")
-        nw.build(str(out_dir() / wave_name.strip()), "waveflag", str(noto_dir() / src_svg.strip()))
+        with open("wave_list.txt") as f:
+            for line in f:
+                src_svg, wave_name = line.split(" ")
+                nw.build(
+                    str(out_dir() / wave_name.strip()),
+                    "waveflag",
+                    str(noto_dir() / src_svg.strip()),
+                )
 
-  ninja_cmd = ["ninja", "-C", os.path.dirname(build_file)]
-  if FLAGS.exec_ninja:
-      print(" ".join(ninja_cmd))
-      subprocess.run(ninja_cmd, check=True)
+    ninja_cmd = ["ninja", "-C", os.path.dirname(build_file)]
+    if FLAGS.exec_ninja:
+        print(" ".join(ninja_cmd))
+        subprocess.run(ninja_cmd, check=True)
 
 
-if __name__ == '__main__':
-  app.run(main)
+if __name__ == "__main__":
+    app.run(main)
