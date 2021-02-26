@@ -270,7 +270,7 @@ def _chord_length_parameterize(points, first, last) -> Sequence[float]:
 def _max_error(points, first, last, curve, u) -> Tuple[float, int]:
     assert degree(curve) == 3
     max_err = 0.0
-    split_at = int((last - first + 1) / 2)
+    split_at = (last - first + 1) // 2
     for i in range(first + 1, last):
         pt = point_at_t(curve, u[i - first])
         dist = Vector.p0_to_p1(points[i], pt).squared_length()
