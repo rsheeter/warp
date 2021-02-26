@@ -297,7 +297,7 @@ def _fit_cubics(
 
     assert num_pts > 1
 
-    # Use heruistic for degenerate region
+    # Use heuristic for degenerate region
     if num_pts == 2:
         dist = Vector.p0_to_p1(points[0], points[1]).length() / 3.0
         return (
