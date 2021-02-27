@@ -20,7 +20,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("build_dir", "build/", "Where build runs.")
 flags.DEFINE_bool("exec_ninja", True, "Whether to run ninja.")
 flags.DEFINE_string("noto_dir", None, "Dir to resolve Noto paths against")
-
+flags.mark_flag_as_required('noto_dir')
 
 def build_dir() -> Path:
     return Path(FLAGS.build_dir).resolve()
@@ -51,7 +51,7 @@ def main(_) -> None:
         nw = ninja_syntax.Writer(f)
 
         util_path = rel_build(Path("naive_warp.py"))
-        nw.rule(f"waveflag", f"python {util_path} --curve_order 2 --out_file $out $in")
+        nw.rule(f"waveflag", f"python {util_path} --out_file $out $in")
         nw.newline()
 
         with open("wave_list.txt") as f:
@@ -70,4 +70,5 @@ def main(_) -> None:
 
 
 if __name__ == "__main__":
+
     app.run(main)

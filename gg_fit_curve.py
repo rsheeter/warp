@@ -304,7 +304,7 @@ def _fit_cubics(
             points,
             split_pt,
             last,
-            tan_center.negate(),
+            -tan_center,
             tan_right,
             max_err,
             uniform_parameters,
