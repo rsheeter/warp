@@ -33,7 +33,7 @@ from math import ceil, floor, sqrt
 from pathlib import Path
 import pathops
 
-from picosvg.geometric_types import Rect
+from picosvg.geometric_types import Vector, Point, Rect
 from picosvg.svg import SVG
 from picosvg.svg_meta import num_args
 
@@ -206,6 +206,18 @@ def _cubic_callback(subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_a
             *line_pos(0.66, curr_xy, end_xy),
             *end_xy,
         )
+
+    if cmd == "Q":
+      assert len(args) == 4
+      cmd = "C"
+      p0 = Point(*curr_xy)
+      p1 = Point(*args[0:2])
+      p2 = Point(*args[2:4])
+      args = (
+        *(p0 + 2/3 * (p1 - p0)),
+        *(p2 + 2/3 * (p1 - p2)),
+        *p2
+      )
 
     if cmd != "C":
         raise ValueError(f"How do you cubic {cmd}, {args}")
@@ -528,6 +540,8 @@ def main(argv):
 
     for shape in svg.shapes():
         shape.explicit_lines(inplace=True)
+        shape.arcs_to_cubics(inplace=True)
+        shape.expand_shorthand(inplace=True)
         shape.walk(prep_callback)
         shape.walk(path_warp.warp_callback)
         shape.round_floats(2, inplace=True)
