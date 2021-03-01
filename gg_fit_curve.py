@@ -35,7 +35,7 @@ def _tan_center(points: Sequence[Point]) -> Vector:
     assert len(points) == 3
     v1 = points[0] - points[1]
     v2 = points[1] - points[2]
-    return _unit(Vector((v1.x + v2.x) / 2, (v1.y + v2.y) / 2))
+    return _unit(Vector((v1.x + v2.x), (v1.y + v2.y)))
 
 
 def degree(curve):
