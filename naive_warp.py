@@ -27,6 +27,7 @@ from fontTools.misc.bezierTools import (
     splitQuadraticAtT,
 )
 from functools import partial
+from helpers import *
 from gg_fit_curve import fit_cubics
 from lxml import etree
 from math import ceil, floor, sqrt
@@ -34,7 +35,7 @@ from pathlib import Path
 import pathops
 
 from picosvg.geometric_types import Vector, Point, Rect
-from picosvg.svg import SVG
+
 from picosvg.svg_meta import num_args
 
 
@@ -175,11 +176,6 @@ class FlagWarp:
 
     def deriv(self, pt):
         return _cubic_deriv_pos(1, *self._seg_ending_at(pt[0]))
-
-
-def _reduce_text(text):
-    text = text.strip() if text else None
-    return text if text else None
 
 
 def _cubic_callback(subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args):
@@ -467,20 +463,6 @@ class FitCubicPathWarp:
         return tuple((cmd, sum((tuple(p) for p in c[1:]), ())) for c in warped_curves)
 
 
-def _load_svg(argv):
-    assert len(argv) <= 2
-    try:
-        input_file = argv[1]
-    except IndexError:
-        input_file = None
-
-    if input_file:
-        svg = SVG.parse(input_file)
-    else:
-        svg = SVG.fromstring(sys.stdin.read())
-    return svg.topicosvg()
-
-
 def _bbox(boxes):
     min_corner = (9999, 9999)
     max_corner = (-9999, -9999)
@@ -517,7 +499,7 @@ def _line(parent, p0, p1):
 
 
 def main(argv):
-    svg = _load_svg(argv)
+    svg = load_svg(argv).topicosvg()
 
     box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
 
@@ -582,17 +564,8 @@ def main(argv):
                     # _dot(tree, pt, radius=1.5, color=color)
         _dot(tree, (0, 0), radius=2.5, color="purple")
 
-    # lxml really likes to retain whitespace
-    for e in tree.iter("*"):
-        e.text = _reduce_text(e.text)
-        e.tail = _reduce_text(e.tail)
-
-    out_content = etree.tostring(tree, pretty_print=True).decode("utf-8")
-    if FLAGS.out_file == "-":
-        print(out_content)
-    else:
-        with open(FLAGS.out_file, "w") as f:
-            f.write(out_content)
+    reduce_whitespace(tree)
+    write_xml(FLAGS.out_file, tree)
 
 
 if __name__ == "__main__":
