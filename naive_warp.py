@@ -27,22 +27,33 @@ from fontTools.misc.bezierTools import (
     splitQuadraticAtT,
 )
 from functools import partial
+from helpers import *
+from gg_fit_curve import fit_cubics
 from lxml import etree
-from math import ceil, sqrt
+from math import ceil, floor, sqrt
 from pathlib import Path
 import pathops
 
-from picosvg.geometric_types import Rect
-from picosvg.svg import SVG
+from picosvg.geometric_types import Vector, Point, Rect
+
 from picosvg.svg_meta import num_args
 
 
-FLAGS = flags.FLAGS
+DEFAULT_PRECISION = 200
 
+FLAGS = flags.FLAGS
 
 flags.DEFINE_string("out_file", "-", "Output, - means stdout")
 flags.DEFINE_bool("debug_info", False, "Add potentially useful debug marks")
-flags.DEFINE_integer("curve_order", 0, "Must be one of 2, 3, quadratic or cubic")
+flags.DEFINE_enum(
+    "mode",
+    "schneider_cubic",
+    ["schneider_cubic", "quad", "dumb_cubic"],
+    "How to generate final curves.",
+)
+flags.DEFINE_float(
+    "precision", DEFAULT_PRECISION, "Default: 1/200th of the viewbox diagonal"
+)
 
 
 def line_pos(t, start, end):
@@ -133,13 +144,13 @@ class FlagWarp:
         # cubic start, control, control, end
         # based on Noto Emoji waveflag.c warp
         y_scale = box.w / 128
-        self.minx = int(box.x)
-        self.maxx = int(box.x + box.w)
+        self.minx = floor(box.x)
+        self.maxx = ceil(box.x + box.w)
         self.warp = (
-            (int(box.x), 0),
-            (int(self.minx + self.maxx / 3), int(-21 * y_scale)),
-            (int(self.minx + 2 * self.maxx / 3), int(13 * y_scale)),
-            (int(self.maxx), int(-8 * y_scale)),
+            (self.minx, 0),
+            (self.minx + self.maxx / 3, -21 * y_scale),
+            (self.minx + 2 * self.maxx / 3, 13 * y_scale),
+            (self.maxx, -8 * y_scale),
         )
         self.miny = min(y for _, y in self.warp)
         self.maxy = max(y for _, y in self.warp)
@@ -167,11 +178,6 @@ class FlagWarp:
         return _cubic_deriv_pos(1, *self._seg_ending_at(pt[0]))
 
 
-def _reduce_text(text):
-    text = text.strip() if text else None
-    return text if text else None
-
-
 def _cubic_callback(subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args):
     if cmd.upper() == "M":
         return ((cmd, args),)
@@ -196,6 +202,18 @@ def _cubic_callback(subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_a
             *line_pos(0.66, curr_xy, end_xy),
             *end_xy,
         )
+
+    if cmd == "Q":
+      assert len(args) == 4
+      cmd = "C"
+      p0 = Point(*curr_xy)
+      p1 = Point(*args[0:2])
+      p2 = Point(*args[2:4])
+      args = (
+        *(p0 + 2/3 * (p1 - p0)),
+        *(p2 + 2/3 * (p1 - p2)),
+        *p2
+      )
 
     if cmd != "C":
         raise ValueError(f"How do you cubic {cmd}, {args}")
@@ -261,9 +279,9 @@ def points(curve, num_seg=100):
     return tuple(bez_pos(step / num_seg, *curve) for step in range(0, num_seg + 1))
 
 
-def _max_pt_err(view_box):
+def _max_pt_err(view_box, precision=DEFAULT_PRECISION):
     # TODO is this remotely reasonable?
-    return _dist((0, 0), (view_box.w, view_box.h)) / 200
+    return _dist((0, 0), (view_box.w, view_box.h)) / precision
 
 
 def _quad_max_err(view_box):
@@ -349,13 +367,13 @@ def _warp_quad(warp, quad):
 
 
 class PathWarp:
-    def __init__(self, view_box, warp, cmd, warp_curve_fn, split_at_t_fn):
+    def __init__(self, view_box, warp, cmd, warp_curve_fn, split_at_t_fn, precision):
         self._view_box = view_box
         self._warp = warp
         self._cmd = cmd
         self._warp_curve_fn = warp_curve_fn
         self._split_at_t_fn = split_at_t_fn
-        self._max_pt_err = _max_pt_err(view_box)
+        self._max_pt_err = _max_pt_err(view_box, precision)
 
     def warp_callback(
         self, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
@@ -404,26 +422,45 @@ class PathWarp:
         return tuple((cmd, sum(q[1:], ())) for q in acceptable)
 
 
-def _quad_path_warp(view_box, warp):
-    return PathWarp(view_box, warp, "Q", _warp_quad, splitQuadraticAtT)
+def _quad_path_warp(view_box, warp, precision):
+    return PathWarp(view_box, warp, "Q", _warp_quad, splitQuadraticAtT, precision)
 
 
-def _cubic_path_warp(view_box, warp):
-    return PathWarp(view_box, warp, "C", _warp_cubic, splitCubicAtT)
+def _cubic_path_warp(view_box, warp, precision):
+    return PathWarp(view_box, warp, "C", _warp_cubic, splitCubicAtT, precision)
 
 
-def _load_svg(argv):
-    assert len(argv) <= 2
-    try:
-        input_file = argv[1]
-    except IndexError:
-        input_file = None
+class FitCubicPathWarp:
+    def __init__(self, view_box, warp, precision):
+        self._view_box = view_box
+        self._warp = warp
+        # fitCurves.py uses squared distances
+        self._max_err = _max_pt_err(view_box, precision) ** 2
 
-    if input_file:
-        svg = SVG.parse(input_file)
-    else:
-        svg = SVG.fromstring(sys.stdin.read())
-    return svg.topicosvg()
+    def warp_callback(
+        self, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
+    ):
+        if cmd.upper() == "M":
+            return ((cmd, _warp_pt(self._warp, args)),)
+
+        assert cmd == "C", f"{cmd} != {self._cmd}"
+        assert len(args) == num_args(cmd)
+
+        # build reference points (# based on arc length)
+        # unwarp: current was already warped, but we'll warp again when processing
+        initial_curve = (_unwarp_pt(self._warp, curr_xy),) + tuple(
+            args[i * 2 : (i + 1) * 2] for i in range(int(len(args) / 2))
+        )
+        warped_pts = tuple(
+            _warp_pt(self._warp, pt) for pt in _ref_pts(self._view_box, initial_curve)
+        )
+
+        # sampled points are evenly spaced over time, we want them to keep the same
+        # parametrization after warping. E.g. the point at t=0.5 before warping will
+        # still be located at t=0.5 on the warped curve.
+        warped_curves = fit_cubics(warped_pts, self._max_err, uniform_parameters=True)
+
+        return tuple((cmd, sum((tuple(p) for p in c[1:]), ())) for c in warped_curves)
 
 
 def _bbox(boxes):
@@ -462,22 +499,31 @@ def _line(parent, p0, p1):
 
 
 def main(argv):
-    svg = _load_svg(argv)
+    svg = load_svg(argv).topicosvg()
 
     box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
 
     warp = FlagWarp(box)
-    if FLAGS.curve_order == 2:
-        prep_callback = partial(_quadratic_callback, _quad_max_err(svg.view_box()))
-        path_warp = _quad_path_warp(svg.view_box(), warp)
-    elif FLAGS.curve_order == 3:
+    precision = FLAGS.precision
+
+    print(f"{FLAGS.mode} mode...", file=sys.stderr)
+
+    if FLAGS.mode == "schneider_cubic":
         prep_callback = _cubic_callback
-        path_warp = _cubic_path_warp(svg.view_box(), warp)
+        path_warp = FitCubicPathWarp(svg.view_box(), warp, precision)
+    elif FLAGS.mode == "quad":
+        prep_callback = partial(_quadratic_callback, _quad_max_err(svg.view_box()))
+        path_warp = _quad_path_warp(svg.view_box(), warp, precision)
+    elif FLAGS.mode == "dumb_cubic":
+        prep_callback = _cubic_callback
+        path_warp = _cubic_path_warp(svg.view_box(), warp, precision)
     else:
-        raise ValueError("Specify a valid --curve_order")
+        raise ValueError("Specify a valid --mode")
 
     for shape in svg.shapes():
         shape.explicit_lines(inplace=True)
+        shape.arcs_to_cubics(inplace=True)
+        shape.expand_shorthand(inplace=True)
         shape.walk(prep_callback)
         shape.walk(path_warp.warp_callback)
         shape.round_floats(2, inplace=True)
@@ -518,17 +564,8 @@ def main(argv):
                     # _dot(tree, pt, radius=1.5, color=color)
         _dot(tree, (0, 0), radius=2.5, color="purple")
 
-    # lxml really likes to retain whitespace
-    for e in tree.iter("*"):
-        e.text = _reduce_text(e.text)
-        e.tail = _reduce_text(e.tail)
-
-    out_content = etree.tostring(tree, pretty_print=True).decode("utf-8")
-    if FLAGS.out_file == "-":
-        print(out_content)
-    else:
-        with open(FLAGS.out_file, "w") as f:
-            f.write(out_content)
+    reduce_whitespace(tree)
+    write_xml(FLAGS.out_file, tree)
 
 
 if __name__ == "__main__":

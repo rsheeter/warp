@@ -16,11 +16,13 @@ from absl import flags
 
 FLAGS = flags.FLAGS
 
+flags.DEFINE_bool("fail_on_error", True, "If True, fail if any file fails to save")
+
 # internal flags, typically client wouldn't change
 flags.DEFINE_string("build_dir", "build/", "Where build runs.")
 flags.DEFINE_bool("exec_ninja", True, "Whether to run ninja.")
 flags.DEFINE_string("noto_dir", None, "Dir to resolve Noto paths against")
-
+flags.mark_flag_as_required('noto_dir')
 
 def build_dir() -> Path:
     return Path(FLAGS.build_dir).resolve()
@@ -30,8 +32,12 @@ def noto_dir() -> Path:
     return Path(FLAGS.noto_dir).resolve()
 
 
-def out_dir() -> Path:
-    return Path("waved")
+def preflight_out_dir() -> Path:
+    return build_dir() / "preflight"
+
+
+def waved_out_dir() -> Path:
+    return build_dir() / "waved"
 
 
 def rel(from_path: Path, to_path: Path) -> Path:
@@ -44,29 +50,52 @@ def rel_build(path: Path) -> Path:
 
 
 def main(_) -> None:
-  build_dir().mkdir(exist_ok=True)
-  out_dir().mkdir(exist_ok=True)
-  build_file = build_dir() / "build.ninja"
-  with open(build_file, "w") as f:
-    nw = ninja_syntax.Writer(f)
+    build_dir().mkdir(exist_ok=True)
+    preflight_out_dir().mkdir(exist_ok=True)
+    waved_out_dir().mkdir(exist_ok=True)
+    build_file = build_dir() / "build.ninja"
+    err_file =  (build_dir() / "warp_errors.log").resolve()
+    with open(build_file, "w") as f:
+        nw = ninja_syntax.Writer(f)
 
-    util_path = rel_build(Path("naive_warp.py"))
-    nw.rule(
-        f"waveflag",
-        f"python {util_path} --curve_order 2 --out_file $out $in"
-    )
-    nw.newline()
-
-    with open("wave_list.txt") as f:
-      for line in f:
-        src_svg, wave_name = line.split(" ")
-        nw.build(str(out_dir() / wave_name.strip()), "waveflag", str(noto_dir() / src_svg.strip()))
-
-  ninja_cmd = ["ninja", "-C", os.path.dirname(build_file)]
-  if FLAGS.exec_ninja:
-      print(" ".join(ninja_cmd))
-      subprocess.run(ninja_cmd, check=True)
+        if FLAGS.fail_on_error:
+          util_path = rel_build(Path("naive_warp.py"))
+          nw.rule(f"waveflag", f"python {util_path} --out_file $out $in")
+          nw.newline()
+        else:
+          util_path = rel_build(Path("warp_runner.py"))
+          nw.rule(f"waveflag", f"python {util_path} --err_file {err_file} --out_file $out $in")
+          nw.newline()
 
 
-if __name__ == '__main__':
-  app.run(main)
+        util_path = rel_build(Path("flag_preflight.py"))
+        nw.rule(f"preflight", f"python {util_path} --out_file $out $in")
+        nw.newline()
+
+        with open("wave_list.txt") as f:
+            for line in f:
+                src_svg, wave_name = (p.strip() for p in line.split(" "))
+
+                nw.build(
+                    str(preflight_out_dir() / src_svg),
+                    "preflight",
+                    str(noto_dir() / src_svg),
+                )
+
+                nw.build(
+                    str(waved_out_dir() / wave_name),
+                    "waveflag",
+                    str(preflight_out_dir() / src_svg),
+                )
+
+    ninja_cmd = ["ninja", "-C", os.path.dirname(build_file)]
+    if FLAGS.exec_ninja:
+        print(" ".join(ninja_cmd))
+        if err_file.is_file():
+          err_file.unlink()
+        subprocess.run(ninja_cmd, check=True)
+
+
+if __name__ == "__main__":
+
+    app.run(main)
