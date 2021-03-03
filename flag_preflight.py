@@ -1,17 +1,8 @@
 """
-Naive warp:
-  pico the svg
-  convert everything to cubic
-  split the cubics (we'll just assume too coarse initially)
-  warp start/end and intermediate points directly
-    no fancy tricks with derivatives... my notes said we should have some
-
-Note the lack of:
-  curve simplification
-  intelligent splitting (only when error introduced)
+Noto region flags have some sharp edges; try to fix them before feeding to 
+nanoemoji. Intended use is to run and commit the result to the noto-emoji repo.
 
 Usage:
-  python naive_warp.py 1f1e6_1f1ec.svg
   python naive_warp.py noto-emoji/third_party/region-flags/svg/GB-WLS.svg --out_file GB-WLS-waved.svg
 """
 from absl import app
