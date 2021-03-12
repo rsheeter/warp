@@ -28,8 +28,9 @@ def _fix_pt(name, attrib):
     while match := re.search(r"([0-9]+(?:[.][0-9]*)?)\s*pt", attrib[name]):
         value = attrib[name]
         new_sz = ntos(round(float(match.group(1)) * 1.25, 2))
-        new_value = value[:match.start()] + new_sz + value[match.end():]
+        new_value = value[: match.start()] + new_sz + value[match.end() :]
         attrib[name] = new_value
+
 
 def main(argv):
     tree = load_svg(argv, load_to=LoadTo.ETREE)
@@ -47,7 +48,6 @@ def main(argv):
                 assert new_name not in keys
                 el.attrib[new_name] = el.attrib[name]
                 del el.attrib[name]
-
 
     write_xml(FLAGS.out_file, tree, pretty=False)
 

@@ -4,24 +4,25 @@ from fontTools.misc.bezierTools import splitCubic, splitCubicAtT
 size(275, 200)
 fontSize(6)
 
+
 class Point(NamedTuple):
     x: float
     y: float
 
     def magnitude(self):
         return sqrt(self.x * self.x + self.y * self.y)
-    
+
     def add(self, other):
         return Point(self.x + other.x, self.y + other.y)
 
     def of_magnitude(self, new_mag):
         # 0? hopefully not today :D
         mag = self.magnitude()
-        return Point(new_mag * self.x / mag, new_mag * self.y / mag)   
+        return Point(new_mag * self.x / mag, new_mag * self.y / mag)
 
 
 def dot(at, radius=2):
-    oval(at.x-radius/2, at.y-radius/2, radius, radius)
+    oval(at.x - radius / 2, at.y - radius / 2, radius, radius)
 
 
 def line_pos(t, start, end):
@@ -30,6 +31,7 @@ def line_pos(t, start, end):
         start.y + t * (end.y - start.y),
     )
 
+
 # naive impl, essentially encoding something like:
 # https://en.wikipedia.org/wiki/B%C3%A9zier_curve#/media/File:B%C3%A9zier_3_big.svg
 def cubic_pos(t, p0, p1, p2, p3):
@@ -37,12 +39,13 @@ def cubic_pos(t, p0, p1, p2, p3):
     q0 = line_pos(t, p0, p1)
     q1 = line_pos(t, p1, p2)
     q2 = line_pos(t, p2, p3)
-    
+
     r0 = line_pos(t, q0, q1)
     r1 = line_pos(t, q1, q2)
     b = line_pos(t, r0, r1)
-    
+
     return b
+
 
 # https://pomax.github.io/bezierinfo/#derivatives
 def cubic_deriv(p0, p1, p2, p3):
@@ -60,7 +63,7 @@ def quad_pos(t, p0, p1, p2):
     b = line_pos(t, q0, q1)
     return b
 
-   
+
 def cubic_deriv_pos(t, p0, p1, p2, p3):
     return quad_pos(t, *cubic_deriv(p0, p1, p2, p3))
 
@@ -72,17 +75,17 @@ def bezOfCubics(cubics):
         bez.curveTo(*cubic[1:])
     return bez
 
+
 def points(cubic, num_seg):
     # num_seq+1 coords on curve, equidistent in t
-    return tuple(
-        cubic_pos(t/num_seg, *cubic)
-        for t in range(0, num_seg + 1)
-    )
+    return tuple(cubic_pos(t / num_seg, *cubic) for t in range(0, num_seg + 1))
+
 
 def draw_points(points, radius=1):
     for pt in points:
         dot(pt, radius)
-      
+
+
 # courtesy of @anthrotype, lightly modified
 def cubic_to_hermite(cubic):
     # u0 and u1 are the tagents at each endpoint
@@ -109,7 +112,8 @@ def hermite_to_cubic(hermite):
         hermite[3],
     )
 
-c_test = (Point(0, 0), Point(1,0), Point(2,0), Point(3,0))
+
+c_test = (Point(0, 0), Point(1, 0), Point(2, 0), Point(3, 0))
 print("c_test", c_test)
 hermite = cubic_to_hermite(c_test)
 print("hermite", hermite)
@@ -117,10 +121,15 @@ c_again = hermite_to_cubic(hermite)
 print("c_again", c_again)
 assert c_test == c_again
 
-def visualizeWarp(initial_cubics, warp_cubic_fn, warp_pt_fn, num_seg=10, draw_ctls=False):
+
+def visualizeWarp(
+    initial_cubics, warp_cubic_fn, warp_pt_fn, num_seg=10, draw_ctls=False
+):
     warped_cubics = []
     for cubic in initial_cubics:
-        split_cubics = splitCubicAtT(*cubic, *(t/num_seg for t in range(0, num_seg+1)))
+        split_cubics = splitCubicAtT(
+            *cubic, *(t / num_seg for t in range(0, num_seg + 1))
+        )
         for split_cubic in split_cubics:
             split_cubic = tuple(Point(*t) for t in split_cubic)
             # naive; just move according to shift
@@ -140,13 +149,13 @@ def visualizeWarp(initial_cubics, warp_cubic_fn, warp_pt_fn, num_seg=10, draw_ct
         stroke(0.3, 0.3, 0.75)
         strokeWidth(0.5)
         drawPath(bezOfCubics((warp_cubic,)))
-        if draw_ctls:        
+        if draw_ctls:
             fill(None)
             stroke(0.6, 0.6, 0.6)
             strokeWidth(1)
             line(*warp_cubic[0:2])
             line(*warp_cubic[2:4])
-            
+
             fill(0, 0, 0)
             stroke(None)
             dot(warp_cubic[0])
@@ -157,21 +166,21 @@ def visualizeWarp(initial_cubics, warp_cubic_fn, warp_pt_fn, num_seg=10, draw_ct
     for cubic in initial_cubics:
         pts = tuple(warp_pt_fn(p) for p in points(cubic, 100))
         for i in range(1, len(pts)):
-            line(pts[i-1], pts[i])
+            line(pts[i - 1], pts[i])
         for pt in pts:
             dot(pt, radius=1)
-    
-    
+
 
 def fancyWarpPt(pt):
     mag_scale = 10
-    val_scale = .25
-    x,y = pt
+    val_scale = 0.25
+    x, y = pt
     new_pt = Point(
         round(x + mag_scale * sin(val_scale * y), 2),
-        round(y + mag_scale * sin(val_scale * x), 2)
+        round(y + mag_scale * sin(val_scale * x), 2),
     )
     return new_pt
+
 
 def fancyWarpViaHermite(cubic):
     hermite = cubic_to_hermite(cubic)
@@ -179,19 +188,17 @@ def fancyWarpViaHermite(cubic):
     warp_cubic = hermite_to_cubic(warp_hermite)
     return warp_cubic
 
+
 ##################################################
 # simple hermite warp test
 ##################################################
 for i in range(1, 5 + 1):
-    simple_cubics = ((
-        Point(50,35 * i),
-        Point(100,35 * i),
-        Point(150,35 * i),
-        Point(200,35 * i)
-    ),)
+    simple_cubics = (
+        (Point(50, 35 * i), Point(100, 35 * i), Point(150, 35 * i), Point(200, 35 * i)),
+    )
 
-    num_seg=(i-1) * 5 + 1
-    fill(0,0,0)
+    num_seg = (i - 1) * 5 + 1
+    fill(0, 0, 0)
     stroke(None)
     text(f"{num_seg} segment(s)", (25, 35 * i - 17))
     visualizeWarp(
@@ -216,11 +223,7 @@ for v in range(25, 200, 25):
     # vertical
     cubics.append((Point(v, 25), Point(v, 75), Point(v, 125), Point(v, 175)))
 
-visualizeWarp(
-    cubics,
-    lambda cubic: tuple(fancyWarpPt(pt) for pt in cubic),
-    fancyWarpPt
-)
+visualizeWarp(cubics, lambda cubic: tuple(fancyWarpPt(pt) for pt in cubic), fancyWarpPt)
 
 ##################################################
 # fancy hermite warp test
@@ -234,12 +237,7 @@ visualizeWarp(cubics, fancyWarpViaHermite, fancyWarpPt)
 ##################################################
 newPage()
 
-cubic = (
-    Point(100,195), 
-    Point(10,100),
-    Point(180,20),
-    Point(150,25)
-)
+cubic = (Point(100, 195), Point(10, 100), Point(180, 20), Point(150, 25))
 
 fill(None)
 stroke(0.5, 0.5, 0.5)
@@ -262,20 +260,20 @@ newPage()
 
 # from waveflag.c
 top = 21
-bot = 128-top
+bot = 128 - top
 B = 21
 C = 4
 
 
 waveflag_mesh = (
-  Point(  1, top+C),
-  Point( 43, top-B+C),
-  Point( 85, top+B-C),
-  Point(127, top-C),
-  Point(127, bot-C),
-  Point( 85, bot+B-C),
-  Point( 43, bot-B+C),
-  Point(  1, bot+C),
+    Point(1, top + C),
+    Point(43, top - B + C),
+    Point(85, top + B - C),
+    Point(127, top - C),
+    Point(127, bot - C),
+    Point(85, bot + B - C),
+    Point(43, bot - B + C),
+    Point(1, bot + C),
 )
 
 oncurve = {0, 3, 4, 7}
@@ -284,11 +282,11 @@ offcurve = {1, 2, 5, 6}
 # draw the basic shape and control points
 translate(x=2, y=70)
 text("Basic Shape", (0, 116))
-#	cairo_line_to(cr,   M(0));
-#	cairo_curve_to(cr,  M(1), M(2), M(3));
-#	cairo_line_to(cr,   M(4));
-#	cairo_curve_to(cr,  M(5), M(6), M(7));
-#	cairo_close_path (cr);
+# 	cairo_line_to(cr,   M(0));
+# 	cairo_curve_to(cr,  M(1), M(2), M(3));
+# 	cairo_line_to(cr,   M(4));
+# 	cairo_curve_to(cr,  M(5), M(6), M(7));
+# 	cairo_close_path (cr);
 path = BezierPath()
 path.moveTo(waveflag_mesh[0])
 path.curveTo(*waveflag_mesh[1:4])
@@ -321,7 +319,7 @@ fill(0.5, 0.5, 0.5)
 stroke(None)
 for idx in offcurve:
     pt = waveflag_mesh[idx]
-    oval(pt.x-1, pt.y-1, 2, 2)    
+    oval(pt.x - 1, pt.y - 1, 2, 2)
 
 # points along curve
 
@@ -332,10 +330,10 @@ line(mesh_deriv[1], mesh_deriv[2])
 stroke(None)
 num_pts = 20
 for t in range(0, num_pts + 1):
-    pt = cubic_pos(t/num_pts, *waveflag_mesh[0:4])
+    pt = cubic_pos(t / num_pts, *waveflag_mesh[0:4])
     fill(0, 0, 0.75)
     dot(pt, radius=1.5)
-    
+
     pt = quad_pos(t, *mesh_deriv)
     fill(0, 0.25, 0.75)
     dot(pt, radius=1)
@@ -348,7 +346,8 @@ warp = (
     Point(x=85, y=13),
     Point(x=127, y=-8),
 )
- 
+
+
 def flagWarpVec(pt, accuracy=0.001):
     # only active between warp[0].x and warp[-1].x
     if pt.x < warp[0].x or pt.x > warp[-1].x:
@@ -363,13 +362,14 @@ def flagWarpVec(pt, accuracy=0.001):
     deriv_pt = cubic_deriv_pos(1, *(Point(*s) for s in segments[0]))
     return Point(0, wpt.y), deriv_pt
 
+
 def flagWarpPt(pt, accuracy=0.001):
     warpvec, derivvec = flagWarpVec(pt, accuracy)
     return (
         Point(pt.x + warpvec.x, pt.y + warpvec.y),
         Point(pt.x + derivvec.x, pt.y + derivvec.y),
     )
-        
+
 
 translate(y=-20)
 
@@ -411,31 +411,31 @@ text("Original Shape(s)", (0, 64))
 rect = (
     # bottom
     (
-          Point(  0,  0),
-          Point( 43,  0),
-          Point( 85,  0),
-          Point(128,  0),
+        Point(0, 0),
+        Point(43, 0),
+        Point(85, 0),
+        Point(128, 0),
     ),
     # rhs
     (
-          Point(128,  0),
-          Point(128, 20),
-          Point(128, 40),
-          Point(128, 60),
+        Point(128, 0),
+        Point(128, 20),
+        Point(128, 40),
+        Point(128, 60),
     ),
     # top
     (
-          Point(128, 60),
-          Point( 85, 60),
-          Point( 43, 60),
-          Point(  0, 60),
+        Point(128, 60),
+        Point(85, 60),
+        Point(43, 60),
+        Point(0, 60),
     ),
     # left
     (
-          Point(  0, 60),
-          Point(  0, 40),
-          Point(  0, 20),
-          Point(  0,  0),
+        Point(0, 60),
+        Point(0, 40),
+        Point(0, 20),
+        Point(0, 0),
     ),
 )
 
@@ -488,14 +488,14 @@ warp = (
     Point(x=128, y=-8),
 )
 mesh = (
-  Point(  0, top+C),
-  Point( 43, top-B+C),
-  Point( 85, top+B-C),
-  Point(128, top-C),
-  Point(128, bot-C),
-  Point( 85, bot+B-C),
-  Point( 43, bot-B+C),
-  Point(  0, bot+C),
+    Point(0, top + C),
+    Point(43, top - B + C),
+    Point(85, top + B - C),
+    Point(128, top - C),
+    Point(128, bot - C),
+    Point(85, bot + B - C),
+    Point(43, bot - B + C),
+    Point(0, bot + C),
 )
 
 warp_mesh = []
@@ -511,10 +511,8 @@ stroke(0.75, 0.2, 0.2)
 strokeWidth(0.5)
 drawPath(bezOfCubics(warp_mesh))
 
-for cubic in warp_mesh:    
+for cubic in warp_mesh:
     for idx, pt in enumerate(cubic):
         stroke(None)
         fill(0, 0.5, 0.25 + 0.25 * idx)
         dot(pt, radius=1.5)
-
-
