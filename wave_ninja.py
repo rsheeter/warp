@@ -22,7 +22,8 @@ flags.DEFINE_bool("fail_on_error", True, "If True, fail if any file fails to sav
 flags.DEFINE_string("build_dir", "build/", "Where build runs.")
 flags.DEFINE_bool("exec_ninja", True, "Whether to run ninja.")
 flags.DEFINE_string("noto_dir", None, "Dir to resolve Noto paths against")
-flags.mark_flag_as_required('noto_dir')
+flags.mark_flag_as_required("noto_dir")
+
 
 def build_dir() -> Path:
     return Path(FLAGS.build_dir).resolve()
@@ -54,19 +55,21 @@ def main(_) -> None:
     preflight_out_dir().mkdir(exist_ok=True)
     waved_out_dir().mkdir(exist_ok=True)
     build_file = build_dir() / "build.ninja"
-    err_file =  (build_dir() / "warp_errors.log").resolve()
+    err_file = (build_dir() / "warp_errors.log").resolve()
     with open(build_file, "w") as f:
         nw = ninja_syntax.Writer(f)
 
         if FLAGS.fail_on_error:
-          util_path = rel_build(Path("naive_warp.py"))
-          nw.rule(f"waveflag", f"python {util_path} --out_file $out $in")
-          nw.newline()
+            util_path = rel_build(Path("naive_warp.py"))
+            nw.rule(f"waveflag", f"python {util_path} --out_file $out $in")
+            nw.newline()
         else:
-          util_path = rel_build(Path("warp_runner.py"))
-          nw.rule(f"waveflag", f"python {util_path} --err_file {err_file} --out_file $out $in")
-          nw.newline()
-
+            util_path = rel_build(Path("warp_runner.py"))
+            nw.rule(
+                f"waveflag",
+                f"python {util_path} --err_file {err_file} --out_file $out $in",
+            )
+            nw.newline()
 
         util_path = rel_build(Path("flag_preflight.py"))
         nw.rule(f"preflight", f"python {util_path} --out_file $out $in")
@@ -92,7 +95,7 @@ def main(_) -> None:
     if FLAGS.exec_ninja:
         print(" ".join(ninja_cmd))
         if err_file.is_file():
-          err_file.unlink()
+            err_file.unlink()
         subprocess.run(ninja_cmd, check=True)
 
 

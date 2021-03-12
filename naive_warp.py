@@ -204,16 +204,12 @@ def _cubic_callback(subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_a
         )
 
     if cmd == "Q":
-      assert len(args) == 4
-      cmd = "C"
-      p0 = Point(*curr_xy)
-      p1 = Point(*args[0:2])
-      p2 = Point(*args[2:4])
-      args = (
-        *(p0 + 2/3 * (p1 - p0)),
-        *(p2 + 2/3 * (p1 - p2)),
-        *p2
-      )
+        assert len(args) == 4
+        cmd = "C"
+        p0 = Point(*curr_xy)
+        p1 = Point(*args[0:2])
+        p2 = Point(*args[2:4])
+        args = (*(p0 + 2 / 3 * (p1 - p0)), *(p2 + 2 / 3 * (p1 - p2)), *p2)
 
     if cmd != "C":
         raise ValueError(f"How do you cubic {cmd}, {args}")
