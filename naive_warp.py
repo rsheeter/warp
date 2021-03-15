@@ -35,11 +35,14 @@ from pathlib import Path
 import pathops
 
 from picosvg.geometric_types import Vector, Point, Rect
-
-from picosvg.svg_meta import num_args
+from picosvg.svg_meta import num_args, ntos
+from picosvg.svg_transform import Affine2D
 
 
 DEFAULT_PRECISION = 200
+# The noto-emoji flags default width/height aspect ratio is 5/3 (see waveflag.c)
+DEFAULT_WIDTH = 1000
+DEFAULT_HEIGHT = 600
 
 FLAGS = flags.FLAGS
 
@@ -54,6 +57,8 @@ flags.DEFINE_enum(
 flags.DEFINE_float(
     "precision", DEFAULT_PRECISION, "Default: 1/200th of the viewbox diagonal"
 )
+flags.DEFINE_float("width", DEFAULT_WIDTH, "Flag width")
+flags.DEFINE_float("height", DEFAULT_HEIGHT, "Flag height")
 
 
 def line_pos(t, start, end):
@@ -494,11 +499,47 @@ def _line(parent, p0, p1):
     line.attrib["y2"] = _coordstr(p1[1])
 
 
+# TODO: move to picosvg proper?
+# First need to fix https://github.com/googlefonts/picosvg/issues/110
+def _picosvg_transform(self, affine):
+    for idx, (el, (shape,)) in enumerate(self._elements()):
+        self.elements[idx] = (el, (shape.apply_transform(affine),))
+
+    for el in self._select_gradients():
+        if "gradientTransform" in el.attrib:
+            gradient_transform = Affine2D.fromstring(el.attrib["gradientTransform"])
+        else:
+            gradient_transform = Affine2D.identity()
+
+        gradient_transform = Affine2D.compose_ltr((gradient_transform, affine))
+
+        if gradient_transform != Affine2D.identity():
+            el.attrib["gradientTransform"] = gradient_transform.tostring()
+        elif "gradientTransform" in el.attrib:
+            del el.attrib["gradientTransform"]
+    return self
+
+
+def normalize_flag_aspect(svg, width, height):
+    current_box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
+    new_box = Rect(0, (width - height) / 2, width, height)
+    affine = Affine2D.rect_to_rect(current_box, new_box)
+
+    _picosvg_transform(svg, affine)
+
+    square_viewbox = Rect(0, 0, width, width)
+    svg.svg_root.attrib["viewBox"] = " ".join(ntos(v) for v in square_viewbox)
+    for attr_name in ("width", "height"):
+        if attr_name in svg.svg_root.attrib:
+            del svg.svg_root.attrib[attr_name]
+
+
 def main(argv):
     svg = load_svg(argv).topicosvg()
 
-    box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
+    normalize_flag_aspect(svg, FLAGS.width, FLAGS.height)
 
+    box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
     warp = FlagWarp(box)
     precision = FLAGS.precision
 
