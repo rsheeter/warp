@@ -535,7 +535,7 @@ def normalize_flag_aspect(svg, width, height):
 
 
 def main(argv):
-    svg = load_svg(argv).topicosvg()
+    svg = load_svg(argv).topicosvg().clip_to_viewbox(inplace=True)
 
     normalize_flag_aspect(svg, FLAGS.width, FLAGS.height)
 
