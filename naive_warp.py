@@ -20,8 +20,8 @@ from absl import flags
 from cu2qu import curve_to_quadratic as cubic_to_quad
 import enum
 from fontTools.misc.bezierTools import (
-    calcCubicArcLength,
-    calcQuadraticArcLength,
+    approximateCubicArcLength,
+    approximateQuadraticArcLength,
     splitCubic,
     splitCubicAtT,
     splitQuadraticAtT,
@@ -294,9 +294,9 @@ def _ref_pts(view_box, curve):
     # we award you one segment per 1000th of viewbox diagonal
     # 100th didn't seem to be enough
     if len(curve) == 4:
-        curve_len = calcCubicArcLength(*curve)
+        curve_len = approximateCubicArcLength(*curve)
     elif len(curve) == 3:
-        curve_len = calcQuadraticArcLength(*curve)
+        curve_len = approximateQuadraticArcLength(*curve)
     else:
         raise AssertionError(len(curve))
     diagonal = _dist((0, 0), (view_box.w, view_box.h))
