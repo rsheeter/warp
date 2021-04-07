@@ -51,6 +51,13 @@ def main(argv):
                 el.attrib[new_name] = el.attrib[name]
                 del el.attrib[name]
 
+            # picosvg doesn't support the 'display' attribute, and there's one flag
+            # AC.svg (Ascension Island) which uses a style="display:inline" but that
+            # is redundant since 'inline' is already the default value for that that
+            # property and thus can be safely omitted.
+            if name == "style" and "display:inline" in el.attrib[name]:
+                el.attrib[name] = el.attrib[name].replace("display:inline", "")
+
     write_xml(FLAGS.out_file, tree, pretty=False)
 
 
