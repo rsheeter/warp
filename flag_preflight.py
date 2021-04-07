@@ -25,7 +25,9 @@ flags.DEFINE_string("out_file", "-", "Output, - means stdout")
 
 
 def _fix_pt(name, attrib):
-    while match := re.search(r"([0-9]+(?:[.][0-9]*)?)\s*pt", attrib[name]):
+    while match := re.search(
+        r"(?:((?:[0-9]+(?:\.[0-9]*)?)|(?:\.[0-9]+)))\s*pt", attrib[name]
+    ):
         value = attrib[name]
         new_sz = ntos(round(float(match.group(1)) * 1.25, 2))
         new_value = value[: match.start()] + new_sz + value[match.end() :]
