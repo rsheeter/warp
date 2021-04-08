@@ -18,6 +18,7 @@ DEFAULT_PRECISION = 200
 SHOULD_RENAME = {
     "store-width": "stroke-width",
 }
+TEXT_TAG = f"{{{svgns()}}}text"
 
 FLAGS = flags.FLAGS
 
@@ -37,6 +38,8 @@ def _fix_pt(name, attrib):
 def main(argv):
     tree = load_svg(argv, load_to=LoadTo.ETREE)
 
+    has_text = tree.getroot().find(TEXT_TAG) is not None
+
     el_to_rm = []
     for el in tree.getiterator("*"):
         keys = list(el.attrib.keys())
@@ -51,12 +54,20 @@ def main(argv):
                 el.attrib[new_name] = el.attrib[name]
                 del el.attrib[name]
 
-            # picosvg doesn't support the 'display' attribute, and there's one flag
-            # AC.svg (Ascension Island) which uses a style="display:inline" but that
-            # is redundant since 'inline' is already the default value for that that
-            # property and thus can be safely omitted.
-            if name == "style" and "display:inline" in el.attrib[name]:
-                el.attrib[name] = el.attrib[name].replace("display:inline", "")
+            if name == "style":
+                # picosvg doesn't support the 'display' attribute, and there's one flag
+                # AC.svg (Ascension Island) which uses a style="display:inline" but that
+                # is redundant since 'inline' is already the default value for that that
+                # property and thus can be safely omitted.
+                if "display:inline" in el.attrib[name]:
+                    el.attrib[name] = el.attrib[name].replace("display:inline", "")
+
+                # There's one flag TA.svg which has style="font-size:12x" everywhere
+                # but doesn't even contain <text> elements to use that! Picosvg does
+                # not currently support embedded text and complains about the unknown
+                # font-size attribute, so we strip it below.
+                if not has_text and "font-size" in el.attrib[name]:
+                    el.attrib[name] = re.sub("font-size:[^;]+;?", "", el.attrib[name])
 
     write_xml(FLAGS.out_file, tree, pretty=False)
 
