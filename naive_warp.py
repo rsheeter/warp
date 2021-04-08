@@ -183,6 +183,17 @@ class FlagWarp:
         return _cubic_deriv_pos(1, *self._seg_ending_at(pt[0]))
 
 
+def close_open_subpaths(path):
+    def callback(subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args):
+        if cmd.upper() == "M" and prev_cmd is not None and prev_cmd.upper() != "Z":
+            return (("Z", ()), (cmd, args))
+        return ((cmd, args),)
+
+    path.walk(callback)
+    if not path.d.endswith(("Z", "z")):
+        path.end()
+
+
 def _cubic_callback(subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args):
     if cmd.upper() == "M":
         return ((cmd, args),)
@@ -561,6 +572,7 @@ def main(argv):
         shape.explicit_lines(inplace=True)
         shape.arcs_to_cubics(inplace=True)
         shape.expand_shorthand(inplace=True)
+        close_open_subpaths(shape)
         shape.walk(prep_callback)
         shape.walk(path_warp.warp_callback)
         shape.round_floats(2, inplace=True)
