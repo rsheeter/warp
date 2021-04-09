@@ -20,6 +20,8 @@ SHOULD_RENAME = {
     "store-width": "stroke-width",
 }
 TEXT_TAG = f"{{{svgns()}}}text"
+SWITCH_TAG = f"{{{svgns()}}}switch"
+FOREIGN_OBJECT_TAG = f"{{{svgns()}}}foreignObject"
 
 
 class Dimension(enum.IntEnum):
@@ -40,6 +42,17 @@ PERCENT_ATTRS = {
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("out_file", "-", "Output, - means stdout")
+
+
+# TODO: export as public function from picosvg?
+def _swap_elements(swaps):
+    for old_el, new_els in swaps:
+        for new_el in reversed(new_els):
+            old_el.addnext(new_el)
+        parent = old_el.getparent()
+        if parent is None:
+            raise ValueError("Lost parent!")
+        parent.remove(old_el)
 
 
 def _fix_pt(name, attrib):
@@ -83,7 +96,19 @@ def main(argv):
     dimensions = _parse_svg_dimensions(svg_root)
 
     el_to_rm = []
+    swaps = []
     for el in tree.getiterator("*"):
+        # The AS.svg flag (American Samoa) uses unsupported <switch> element,
+        # in turn containing an unsupported <foreignObject> element with some
+        # Adobe Illustrator-specific metadata. This seem to be ignored by browsers.
+        # Simply stripping the switch while keeping all its children (except
+        # for the foreignObject one) fixes this specific flag. I am not sure if this
+        # can be applied more generally to any switch in the wild, so for know
+        # it's better to keep this hack in here, instead of in picosvg proper.
+        if el.tag == SWITCH_TAG:
+            swaps.append((el, [e for e in el if e.tag != FOREIGN_OBJECT_TAG]))
+            continue
+
         # replace relative percentages with absolute numbers
         _fix_percents(el, dimensions)
 
@@ -113,6 +138,8 @@ def main(argv):
                 # font-size attribute, so we strip it below.
                 if not has_text and "font-size" in el.attrib[name]:
                     el.attrib[name] = re.sub("font-size:[^;]+;?", "", el.attrib[name])
+
+    _swap_elements(swaps)
 
     write_xml(FLAGS.out_file, tree, pretty=False)
 
