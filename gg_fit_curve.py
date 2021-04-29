@@ -256,12 +256,12 @@ def _fit_cubics(
 
     # Use heuristic for degenerate region
     if num_pts == 2:
-        dist = Vector.p0_to_p1(points[0], points[1]).length() / 3.0
+        dist = (Point(*points[0]) - Point(*points[1])).norm() / 3.0
         return (
             (
                 points[0],
-                points[0].add(tan_left.scale(dist)),
-                points[1].add(tan_right.scale(dist)),
+                points[0] + tan_left * dist,
+                points[1] + tan_right * dist,
                 points[1],
             ),
         )
