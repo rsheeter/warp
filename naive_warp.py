@@ -30,13 +30,14 @@ from functools import partial
 from helpers import *
 from gg_fit_curve import fit_cubics
 from lxml import etree
-from math import ceil, floor, sqrt
+from math import ceil, floor, sqrt, degrees, asin
 from pathlib import Path
 import pathops
 
 from picosvg.geometric_types import Vector, Point, Rect
-from picosvg.svg_meta import num_args, ntos
+from picosvg.svg_meta import num_args, ntos, strip_ns
 from picosvg.svg_transform import Affine2D
+from picosvg.svg import _GRADIENT_CLASSES, SVGLinearGradient, SVGRadialGradient
 
 
 DEFAULT_PRECISION = 200
@@ -86,9 +87,9 @@ def cubic_pos(t, p0, p1, p2, p3):
 def cubic_deriv(p0, p1, p2, p3):
     # derivative is a quad
     return (
-        Point(3 * (p1.x - p0.x), 3 * (p1.y - p0.y)),
-        Point(3 * (p2.x - p1.x), 3 * (p2.y - p1.y)),
-        Point(3 * (p3.x - p2.x), 3 * (p3.y - p2.y)),
+        Point(3 * (p1[0] - p0[0]), 3 * (p1[1] - p0[1])),
+        Point(3 * (p2[0] - p1[0]), 3 * (p2[1] - p1[1])),
+        Point(3 * (p3[0] - p2[0]), 3 * (p3[1] - p2[1])),
     )
 
 
@@ -112,6 +113,20 @@ def bez_pos(t, *points):
 
 def cubic_deriv_pos(t, p0, p1, p2, p3):
     return quad_pos(t, *cubic_deriv(p0, p1, p2, p3))
+
+
+def cubic_tangent(t, p0, p1, p2, p3) -> Vector:
+    # Returns the unit vector defining the cubic bezier curve's direction at t
+    if t == 0.0:
+        tangent = Point(*p1) - Point(*p0)
+    elif t == 1.0:
+        tangent = Point(*p3) - Point(*p2)
+    else:
+        tangent = Vector(*cubic_deriv_pos(t, p0, p1, p2, p3))
+    tangent = tangent.unit()
+    if tangent is not None:
+        return tangent
+    return Vector()
 
 
 def clamp(minv, maxv, v):
@@ -179,8 +194,15 @@ class FlagWarp:
         assert result[1] >= self.miny and result[1] <= self.maxy
         return result
 
-    def deriv(self, pt):
-        return _cubic_deriv_pos(1, *self._seg_ending_at(pt[0]))
+    def skewY(self, x: float) -> Affine2D:
+        # Get linear transform that approximates the flag's (non-linear) warp around
+        # the given x coordinate ("Jacobian matrix"?).
+        if x <= self.minx:
+            tangent = cubic_tangent(0.0, *self.warp)
+        else:
+            tangent = cubic_tangent(1.0, *self._seg_ending_at(x))
+        angle = degrees(asin(tangent.y))
+        return Affine2D.fromstring(f"translate({x}) skewY({angle}) translate({-x})")
 
 
 def close_open_subpaths(path):
@@ -510,6 +532,41 @@ def _line(parent, p0, p1):
     line.attrib["y2"] = _coordstr(p1[1])
 
 
+def _mid_point(p1, p2):
+    x1, y1 = p1
+    x2, y2 = p2
+    return Point(x1, y1) + (Point(x2, y2) - Point(x1, y1)) * 0.5
+
+
+def _gradient_mid_point(gradient):
+    if isinstance(gradient, SVGLinearGradient):
+        return _mid_point((gradient.x1, gradient.y1), (gradient.x2, gradient.y2))
+    elif isinstance(gradient, SVGRadialGradient):
+        return _mid_point((gradient.cx, gradient.cy), (gradient.fx, gradient.fy))
+    else:
+        raise TypeError(type(gradient))
+
+
+def _transform_gradients(self, warp):
+    for el in self._select_gradients():
+        gradient = _GRADIENT_CLASSES[strip_ns(el.tag)].from_element(el, self.view_box())
+
+        mid_pt = _gradient_mid_point(gradient)
+        mid_pt = gradient.gradientTransform.map_point(mid_pt)
+        translate = Affine2D.identity().translate(*warp.vec(mid_pt))
+        mid_pt = translate.map_point(mid_pt)
+
+        gradient_transform = Affine2D.compose_ltr(
+            (gradient.gradientTransform, translate, warp.skewY(mid_pt.x))
+        )
+
+        if gradient_transform != Affine2D.identity():
+            el.attrib["gradientTransform"] = gradient_transform.tostring()
+        elif "gradientTransform" in el.attrib:
+            del el.attrib["gradientTransform"]
+    return self
+
+
 # TODO: move to picosvg proper?
 # First need to fix https://github.com/googlefonts/picosvg/issues/110
 def _picosvg_transform(self, affine):
@@ -517,12 +574,8 @@ def _picosvg_transform(self, affine):
         self.elements[idx] = (el, (shape.apply_transform(affine),))
 
     for el in self._select_gradients():
-        if "gradientTransform" in el.attrib:
-            gradient_transform = Affine2D.fromstring(el.attrib["gradientTransform"])
-        else:
-            gradient_transform = Affine2D.identity()
-
-        gradient_transform = Affine2D.compose_ltr((gradient_transform, affine))
+        gradient = _GRADIENT_CLASSES[strip_ns(el.tag)].from_element(el, self.view_box())
+        gradient_transform = Affine2D.compose_ltr((gradient.gradientTransform, affine))
 
         if gradient_transform != Affine2D.identity():
             el.attrib["gradientTransform"] = gradient_transform.tostring()
@@ -576,6 +629,8 @@ def main(argv):
         shape.walk(prep_callback)
         shape.walk(path_warp.warp_callback)
         shape.round_floats(2, inplace=True)
+
+    _transform_gradients(svg, warp)
 
     tree = svg.toetree()
 
