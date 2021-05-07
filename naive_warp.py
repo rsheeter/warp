@@ -41,6 +41,7 @@ from picosvg.svg import _GRADIENT_CLASSES, SVGLinearGradient, SVGRadialGradient
 
 
 DEFAULT_PRECISION = 200
+DEFAULT_FLATNESS = 1.0001
 # The noto-emoji flags default width/height aspect ratio is 5/3 (see waveflag.c)
 DEFAULT_WIDTH = 1000
 DEFAULT_HEIGHT = 600
@@ -57,6 +58,11 @@ flags.DEFINE_enum(
 )
 flags.DEFINE_float(
     "precision", DEFAULT_PRECISION, "Default: 1/200th of the viewbox diagonal"
+)
+flags.DEFINE_float(
+    "flatness",
+    DEFAULT_FLATNESS,
+    "How closely a curve approximates a line: 1.0 exactly flat, > 1.0 flat enough",
 )
 flags.DEFINE_float("width", DEFAULT_WIDTH, "Flag width")
 flags.DEFINE_float("height", DEFAULT_HEIGHT, "Flag height")
@@ -401,13 +407,16 @@ def _warp_quad(warp, quad):
 
 
 class PathWarp:
-    def __init__(self, view_box, warp, cmd, warp_curve_fn, split_at_t_fn, precision):
+    def __init__(
+        self, view_box, warp, cmd, warp_curve_fn, split_at_t_fn, precision, flatness
+    ):
         self._view_box = view_box
         self._warp = warp
         self._cmd = cmd
         self._warp_curve_fn = warp_curve_fn
         self._split_at_t_fn = split_at_t_fn
         self._max_pt_err = _max_pt_err(view_box, precision)
+        self._flatness = flatness
 
     def warp_callback(
         self, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
@@ -453,23 +462,50 @@ class PathWarp:
             #     f"frontier {len(frontier)} accepted {len(acceptable)}; {len(warp_refs)} for warp"
             # )
 
-        return tuple((cmd, sum(q[1:], ())) for q in acceptable)
+        return tuple(
+            ("L", q[-1])
+            if _is_almost_line(q, self._flatness)
+            else (cmd, sum(q[1:], ()))
+            for q in acceptable
+        )
 
 
-def _quad_path_warp(view_box, warp, precision):
-    return PathWarp(view_box, warp, "Q", _warp_quad, splitQuadraticAtT, precision)
+def _quad_path_warp(view_box, warp, precision, flatness):
+    return PathWarp(
+        view_box, warp, "Q", _warp_quad, splitQuadraticAtT, precision, flatness
+    )
 
 
-def _cubic_path_warp(view_box, warp, precision):
-    return PathWarp(view_box, warp, "C", _warp_cubic, splitCubicAtT, precision)
+def _cubic_path_warp(view_box, warp, precision, flatness):
+    return PathWarp(
+        view_box, warp, "C", _warp_cubic, splitCubicAtT, precision, flatness
+    )
+
+
+def _is_almost_line(curve, flatness=1.0):
+    # Returns True if the bezier curve is equivalent to a line.
+    # A 'flat' bezier curve is one such that the sum of the distances between
+    # consecutive control points equals the distance from start to end points.
+    # That's because if a control point isn't on the line from start to end then
+    # the length would exceed the direct path start => end.
+    # The 'flatness' factor of 1.0 means exactly flat, anything greater than 1.0
+    # proportionately means flat "enough". Less than 1.0 means never flat (i.e.
+    # keep all flat curves as curves, FWIW).
+    points = [Point(*p) for p in curve]
+    length = 0
+    for i in range(len(curve) - 1):
+        length += (points[i + 1] - points[i]).norm()
+    max_length = (points[-1] - points[0]).norm()
+    return length <= flatness * max_length
 
 
 class FitCubicPathWarp:
-    def __init__(self, view_box, warp, precision):
+    def __init__(self, view_box, warp, precision, flatness):
         self._view_box = view_box
         self._warp = warp
         # fitCurves.py uses squared distances
         self._max_err = _max_pt_err(view_box, precision) ** 2
+        self._flatness = flatness
 
     def warp_callback(
         self, subpath_start, curr_xy, cmd, args, prev_xy, prev_cmd, prev_args
@@ -494,7 +530,12 @@ class FitCubicPathWarp:
         # still be located at t=0.5 on the warped curve.
         warped_curves = fit_cubics(warped_pts, self._max_err, uniform_parameters=True)
 
-        return tuple((cmd, sum((tuple(p) for p in c[1:]), ())) for c in warped_curves)
+        return tuple(
+            ("L", c[-1])
+            if _is_almost_line(c, self._flatness)
+            else (cmd, sum((tuple(p) for p in c[1:]), ()))
+            for c in warped_curves
+        )
 
 
 def _bbox(boxes):
@@ -606,18 +647,19 @@ def main(argv):
     box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
     warp = FlagWarp(box)
     precision = FLAGS.precision
+    flatness = FLAGS.flatness
 
     print(f"{FLAGS.mode} mode...", file=sys.stderr)
 
     if FLAGS.mode == "schneider_cubic":
         prep_callback = _cubic_callback
-        path_warp = FitCubicPathWarp(svg.view_box(), warp, precision)
+        path_warp = FitCubicPathWarp(svg.view_box(), warp, precision, flatness)
     elif FLAGS.mode == "quad":
         prep_callback = partial(_quadratic_callback, _quad_max_err(svg.view_box()))
-        path_warp = _quad_path_warp(svg.view_box(), warp, precision)
+        path_warp = _quad_path_warp(svg.view_box(), warp, precision, flatness)
     elif FLAGS.mode == "dumb_cubic":
         prep_callback = _cubic_callback
-        path_warp = _cubic_path_warp(svg.view_box(), warp, precision)
+        path_warp = _cubic_path_warp(svg.view_box(), warp, precision, flatness)
     else:
         raise ValueError("Specify a valid --mode")
 
