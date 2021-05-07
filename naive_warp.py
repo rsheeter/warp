@@ -484,6 +484,8 @@ def _curve_is_flat(curve, flatness=1.0):
     # Returns True if the bezier curve is equivalent to a line.
     # A 'flat' bezier curve is one such that the sum of the distances between
     # consecutive control points equals the distance from start to end points.
+    # That's because if a control point isn't on the line from start to end then
+    # the length would exceed the direct path start => end.
     # The 'flatness' factor of 1.0 means exactly flat, anything greater than 1.0
     # proportionately means flat "enough". Less than 1.0 means never flat (i.e.
     # keep all flat curves as curves, FWIW).
