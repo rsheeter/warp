@@ -463,7 +463,7 @@ class PathWarp:
             # )
 
         return tuple(
-            ("L", q[-1]) if _curve_is_flat(q, self._flatness) else (cmd, sum(q[1:], ()))
+            ("L", q[-1]) if _is_almost_line(q, self._flatness) else (cmd, sum(q[1:], ()))
             for q in acceptable
         )
 
@@ -480,7 +480,7 @@ def _cubic_path_warp(view_box, warp, precision, flatness):
     )
 
 
-def _curve_is_flat(curve, flatness=1.0):
+def _is_almost_line(curve, flatness=1.0):
     # Returns True if the bezier curve is equivalent to a line.
     # A 'flat' bezier curve is one such that the sum of the distances between
     # consecutive control points equals the distance from start to end points.
@@ -530,7 +530,7 @@ class FitCubicPathWarp:
 
         return tuple(
             ("L", c[-1])
-            if _curve_is_flat(c, self._flatness)
+            if _is_almost_line(c, self._flatness)
             else (cmd, sum((tuple(p) for p in c[1:]), ()))
             for c in warped_curves
         )
