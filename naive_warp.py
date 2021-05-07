@@ -463,7 +463,9 @@ class PathWarp:
             # )
 
         return tuple(
-            ("L", q[-1]) if _is_almost_line(q, self._flatness) else (cmd, sum(q[1:], ()))
+            ("L", q[-1])
+            if _is_almost_line(q, self._flatness)
+            else (cmd, sum(q[1:], ()))
             for q in acceptable
         )
 
