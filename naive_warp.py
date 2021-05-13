@@ -40,7 +40,7 @@ from picosvg.svg_transform import Affine2D
 from picosvg.svg import _GRADIENT_CLASSES, SVGLinearGradient, SVGRadialGradient
 
 
-DEFAULT_PRECISION = 200
+DEFAULT_PRECISION = 1000
 DEFAULT_FLATNESS = 1.0001
 # The noto-emoji flags default width/height aspect ratio is 5/3 (see waveflag.c)
 DEFAULT_WIDTH = 1000
@@ -57,7 +57,7 @@ flags.DEFINE_enum(
     "How to generate final curves.",
 )
 flags.DEFINE_float(
-    "precision", DEFAULT_PRECISION, "Default: 1/200th of the viewbox diagonal"
+    "precision", DEFAULT_PRECISION, "Default: 1/1000th of the viewbox diagonal"
 )
 flags.DEFINE_float(
     "flatness",
