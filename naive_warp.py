@@ -42,9 +42,14 @@ from picosvg.svg import _GRADIENT_CLASSES, SVGLinearGradient, SVGRadialGradient
 
 DEFAULT_PRECISION = 1000
 DEFAULT_FLATNESS = 1.0001
-# The noto-emoji flags default width/height aspect ratio is 5/3 (see waveflag.c)
-DEFAULT_WIDTH = 1000
-DEFAULT_HEIGHT = 600
+# The noto-emoji flags width/height aspect ratio is ~= 1.46. I found this empirically
+# by measuring 126 / 86 pixels, centered horizontally and vertically within a 128 x 128
+# PNG viewport. The values below are adjusted for 1000 x 1000 viewbox size.
+DEFAULT_VIEWBOX_SIZE = 1000
+DEFAULT_WIDTH = 984
+DEFAULT_HEIGHT = 672
+DEFAULT_RIGHT_MARGIN = 8
+DEFAULT_TOP_MARGIN = 164
 
 FLAGS = flags.FLAGS
 
@@ -64,8 +69,11 @@ flags.DEFINE_float(
     DEFAULT_FLATNESS,
     "How closely a curve approximates a line: 1.0 exactly flat, > 1.0 flat enough",
 )
+flags.DEFINE_float("viewbox_size", DEFAULT_VIEWBOX_SIZE, "Viewbox width and height")
 flags.DEFINE_float("width", DEFAULT_WIDTH, "Flag width")
 flags.DEFINE_float("height", DEFAULT_HEIGHT, "Flag height")
+flags.DEFINE_float("right_margin", DEFAULT_RIGHT_MARGIN, "Flag right margin")
+flags.DEFINE_float("top_margin", DEFAULT_TOP_MARGIN, "Flag top margin")
 
 
 def line_pos(t, start, end):
@@ -173,10 +181,10 @@ class FlagWarp:
         self.minx = floor(box.x)
         self.maxx = ceil(box.x + box.w)
         self.warp = (
-            (self.minx, 0),
-            (self.minx + self.maxx / 3, -21 * y_scale),
-            (self.minx + 2 * self.maxx / 3, 13 * y_scale),
-            (self.maxx, -8 * y_scale),
+            (self.minx, 4 * y_scale),
+            (self.minx + self.maxx / 3, -17 * y_scale),
+            (self.minx + 2 * self.maxx / 3, 17 * y_scale),
+            (self.maxx, -4 * y_scale),
         )
         self.miny = min(y for _, y in self.warp)
         self.maxy = max(y for _, y in self.warp)
@@ -625,14 +633,14 @@ def _picosvg_transform(self, affine):
     return self
 
 
-def normalize_flag_aspect(svg, width, height):
+def normalize_flag_aspect(svg, viewbox_size, width, height, right_margin, top_margin):
     current_box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
-    new_box = Rect(0, (width - height) / 2, width, height)
+    new_box = Rect(right_margin, top_margin, width, height)
     affine = Affine2D.rect_to_rect(current_box, new_box)
 
     _picosvg_transform(svg, affine)
 
-    square_viewbox = Rect(0, 0, width, width)
+    square_viewbox = Rect(0, 0, viewbox_size, viewbox_size)
     svg.svg_root.attrib["viewBox"] = " ".join(ntos(v) for v in square_viewbox)
     for attr_name in ("width", "height"):
         if attr_name in svg.svg_root.attrib:
@@ -642,7 +650,14 @@ def normalize_flag_aspect(svg, width, height):
 def main(argv):
     svg = load_svg(argv).topicosvg().clip_to_viewbox(inplace=True)
 
-    normalize_flag_aspect(svg, FLAGS.width, FLAGS.height)
+    normalize_flag_aspect(
+        svg,
+        FLAGS.viewbox_size,
+        FLAGS.width,
+        FLAGS.height,
+        FLAGS.right_margin,
+        FLAGS.top_margin,
+    )
 
     box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
     warp = FlagWarp(box)
