@@ -14,6 +14,7 @@ Usage:
   python naive_warp.py 1f1e6_1f1ec.svg
   python naive_warp.py noto-emoji/third_party/region-flags/svg/GB-WLS.svg --out_file GB-WLS-waved.svg
 """
+import re
 import sys
 from absl import app
 from absl import flags
@@ -50,6 +51,8 @@ DEFAULT_WIDTH = 984
 DEFAULT_HEIGHT = 672
 DEFAULT_RIGHT_MARGIN = 8
 DEFAULT_TOP_MARGIN = 164
+# The aspect ratio of (the majority of) the input SVG flags
+STD_ASPECT = 5 / 3
 
 FLAGS = flags.FLAGS
 
@@ -174,16 +177,16 @@ def quad_from_three_points(p0, p1, p2):
 
 
 class FlagWarp:
-    def __init__(self, box):
+    def __init__(self, box, viewbox_size):
         # cubic start, control, control, end
         # based on Noto Emoji waveflag.c warp
-        y_scale = box.w / 128
+        y_scale = viewbox_size / 128
         self.minx = floor(box.x)
         self.maxx = ceil(box.x + box.w)
         self.warp = (
             (self.minx, 4 * y_scale),
-            (self.minx + self.maxx / 3, -17 * y_scale),
-            (self.minx + 2 * self.maxx / 3, 17 * y_scale),
+            (self.minx + box.w / 3, -17 * y_scale),
+            (self.minx + 2 * box.w / 3, 17 * y_scale),
             (self.maxx, -4 * y_scale),
         )
         self.miny = min(y for _, y in self.warp)
@@ -633,9 +636,70 @@ def _picosvg_transform(self, affine):
     return self
 
 
+SVG_UNITS_RE = re.compile("(?:em|ex|px|pt|pc|cm|mm|in|%)$")
+
+
+# TODO: move to picosvg?
+def apply_viewbox_preserve_aspect_ratio(svg):
+    """If viewport != viewBox apply the resulting transform and remove viewBox.
+    Takes 'preserveAspectRatio' into account.
+    E.g. The Qatar flag (QA.svg) needs this treatment.
+    """
+    svg_root = svg.svg_root
+    width = svg_root.attrib.get("width")
+    height = svg_root.attrib.get("height")
+    if width is not None and height is not None and "viewBox" in svg_root.attrib:
+        # ignore absolute length units; we're only interested in the relative size
+        # of viewport vs viewbox here
+        width = SVG_UNITS_RE.sub("", width)
+        height = SVG_UNITS_RE.sub("", height)
+        viewport = Rect(0, 0, float(width), float(height))
+        viewbox = svg.view_box()
+        if viewport != viewbox:
+            transform = Affine2D.rect_to_rect(
+                viewbox,
+                viewport,
+                svg_root.attrib.get("preserveAspectRatio", "xMidYMid"),
+            )
+            _picosvg_transform(svg, transform)
+            del svg_root.attrib["viewBox"]
+            if "preserveAspectRatio" in svg_root.attrib:
+                del svg_root.attrib["preserveAspectRatio"]
+
+
+def _x_aspect(v, aspect, size):
+    # scale abscissa around mid-point if aspect < 1.0 (i.e. width narrower than height)
+    mid = size / 2
+    return v if aspect >= 1.0 else (v - mid) * aspect + mid
+
+
+def _y_aspect(v, aspect, size):
+    # scale ordinate around mid-point if aspect > 1.0 (i.e. height taller than width)
+    mid = size / 2
+    return v if aspect <= 1.0 else (v - mid) / aspect + mid
+
+
 def normalize_flag_aspect(svg, viewbox_size, width, height, right_margin, top_margin):
+    apply_viewbox_preserve_aspect_ratio(svg)
+
     current_box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
-    new_box = Rect(right_margin, top_margin, width, height)
+
+    # Try to keep overall proportions for the flags that are considerably
+    # narrower or wider than the standard aspect ratio.
+    aspect = current_box.w / current_box.h
+    aspect /= STD_ASPECT
+    aspect = sqrt(aspect)  # Discount the effect
+    if 0.9 <= aspect <= 1.1:
+        aspect = 1.0
+    else:
+        print("Non-standard aspect ratio:", aspect)
+
+    xmin = _x_aspect(right_margin, aspect, viewbox_size)
+    ymin = _y_aspect(top_margin, aspect, viewbox_size)
+    xmax = _x_aspect(right_margin + width, aspect, viewbox_size)
+    ymax = _y_aspect(top_margin + height, aspect, viewbox_size)
+    new_box = Rect(xmin, ymin, xmax - xmin, ymax - ymin)
+
     affine = Affine2D.rect_to_rect(current_box, new_box)
 
     _picosvg_transform(svg, affine)
@@ -660,7 +724,7 @@ def main(argv):
     )
 
     box = _bbox(tuple(s.bounding_box() for s in svg.shapes()))
-    warp = FlagWarp(box)
+    warp = FlagWarp(box, viewbox_size=FLAGS.viewbox_size)
     precision = FLAGS.precision
     flatness = FLAGS.flatness
 
