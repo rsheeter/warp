@@ -51,6 +51,7 @@ DEFAULT_WIDTH = 984
 DEFAULT_HEIGHT = 672
 DEFAULT_RIGHT_MARGIN = 8
 DEFAULT_TOP_MARGIN = 164
+DEFAULT_BORDER_WIDTH = 1 / 32
 # The aspect ratio of (the majority of) the input SVG flags
 STD_ASPECT = 5 / 3
 
@@ -77,6 +78,9 @@ flags.DEFINE_float("width", DEFAULT_WIDTH, "Flag width")
 flags.DEFINE_float("height", DEFAULT_HEIGHT, "Flag height")
 flags.DEFINE_float("right_margin", DEFAULT_RIGHT_MARGIN, "Flag right margin")
 flags.DEFINE_float("top_margin", DEFAULT_TOP_MARGIN, "Flag top margin")
+flags.DEFINE_float(
+    "border_size", DEFAULT_BORDER_WIDTH, "Relative border size as proportion of viewbox"
+)
 
 
 def line_pos(t, start, end):
@@ -711,6 +715,28 @@ def normalize_flag_aspect(svg, viewbox_size, width, height, right_margin, top_ma
             del svg.svg_root.attrib[attr_name]
 
 
+def make_border_svg(viewbox_size, border_size, box):
+    stroke_width = border_size * viewbox_size * 2
+    # this is to make horizontal strokes a bit thicker to compensate for the non-linear
+    # warp that makes them look thinner than the vertical ones
+    padding = stroke_width * 0.08
+    svg = SVG.fromstring(
+        f"""<svg version="1.1" xmlns="http://www.w3.org/2000/svg"
+                     viewBox="0 0 {viewbox_size} {viewbox_size}">
+              <defs>
+                <clipPath id="clip">
+                  <rect x="{box.x}" y="{box.y}"
+                        width="{box.w}" height="{box.h}"/>
+                </clipPath>
+              </defs>
+              <rect fill="none" stroke="#1A1A1A" stroke-width="{stroke_width}"
+                    stroke-opacity="0.2" x="{box.x}" y="{box.y + padding / 2}"
+                    width="{box.w}" height="{box.h - padding}" clip-path="url(#clip)"/>
+            </svg>"""
+    ).topicosvg(inplace=True)
+    return svg
+
+
 def main(argv):
     svg = load_svg(argv).topicosvg().clip_to_viewbox(inplace=True)
 
@@ -741,6 +767,10 @@ def main(argv):
         path_warp = _cubic_path_warp(svg.view_box(), warp, precision, flatness)
     else:
         raise ValueError("Specify a valid --mode")
+
+    if FLAGS.border_size:
+        border = make_border_svg(FLAGS.viewbox_size, FLAGS.border_size, box)
+        svg.append_to("/svg:svg", border.xpath_one("//svg:path"))
 
     for shape in svg.shapes():
         shape.explicit_lines(inplace=True)
