@@ -12,11 +12,15 @@ flags.DEFINE_string("out_file", "-", "Output, - means stdout")
 flags.DEFINE_string(
     "err_file", "-", "Where to write output for failures, - means stderr"
 )
+flags.DEFINE_bool("border", True, "Whether to add a border to the flag")
 
 
 def main(argv):
     assert len(argv) == 2
-    cmd = ("python", "../naive_warp.py", "--out_file", FLAGS.out_file, argv[1])
+    cmd = ["python", "../naive_warp.py", "--out_file", FLAGS.out_file]
+    if not FLAGS.border:
+        cmd.extend(["--border_size", 0])
+    cmd.append(argv[1])
     cmd_result = subprocess.run(cmd, capture_output=True, text=True)
     if cmd_result.returncode != 0:
         result = [

@@ -63,11 +63,21 @@ def main(_) -> None:
             util_path = rel_build(Path("naive_warp.py"))
             nw.rule(f"waveflag", f"python {util_path} --out_file $out $in")
             nw.newline()
+            nw.rule(
+                f"waveflag-no-border",
+                f"python {util_path} --border_size 0 --out_file $out $in",
+            )
+            nw.newline()
         else:
             util_path = rel_build(Path("warp_runner.py"))
             nw.rule(
                 f"waveflag",
                 f"python {util_path} --err_file {err_file} --out_file $out $in",
+            )
+            nw.newline()
+            nw.rule(
+                f"waveflag-no-border",
+                f"python {util_path} --noborder --err_file {err_file} --out_file $out $in",
             )
             nw.newline()
 
@@ -77,7 +87,13 @@ def main(_) -> None:
 
         with open("wave_list.txt") as f:
             for line in f:
-                src_svg, wave_name = (p.strip() for p in line.split(" "))
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                src_svg, wave_name, *options = (p.strip() for p in line.split(" "))
+                waveflag_rule = "waveflag"
+                if options and not bool(int(options[0])):
+                    waveflag_rule = "waveflag-no-border"
 
                 nw.build(
                     str(preflight_out_dir() / src_svg),
@@ -87,7 +103,7 @@ def main(_) -> None:
 
                 nw.build(
                     str(waved_out_dir() / wave_name),
-                    "waveflag",
+                    waveflag_rule,
                     str(preflight_out_dir() / src_svg),
                 )
 

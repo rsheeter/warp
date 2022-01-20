@@ -1,3 +1,4 @@
+# input-filename | output-name | border-size(optional)
 third_party/region-flags/svg/PY.svg emoji_u1f1f5_1f1fe.svg
 third_party/region-flags/svg/HU.svg emoji_u1f1ed_1f1fa.svg
 third_party/region-flags/svg/TH.svg emoji_u1f1f9_1f1ed.svg
@@ -104,7 +105,7 @@ third_party/region-flags/svg/CM.svg emoji_u1f1e8_1f1f2.svg
 third_party/region-flags/svg/ZA.svg emoji_u1f1ff_1f1e6.svg
 third_party/region-flags/svg/VC.svg emoji_u1f1fb_1f1e8.svg
 third_party/region-flags/svg/GA.svg emoji_u1f1ec_1f1e6.svg
-third_party/region-flags/svg/MQ.svg emoji_u1f1f2_1f1f6.svg
+third_party/region-flags/svg/MQ.svg emoji_u1f1f2_1f1f6.svg 0
 third_party/region-flags/svg/BG.svg emoji_u1f1e7_1f1ec.svg
 third_party/region-flags/svg/FM.svg emoji_u1f1eb_1f1f2.svg
 third_party/region-flags/svg/AS.svg emoji_u1f1e6_1f1f8.svg
@@ -140,7 +141,7 @@ third_party/region-flags/svg/GW.svg emoji_u1f1ec_1f1fc.svg
 third_party/region-flags/svg/CY.svg emoji_u1f1e8_1f1fe.svg
 third_party/region-flags/svg/ZM.svg emoji_u1f1ff_1f1f2.svg
 third_party/region-flags/svg/JE.svg emoji_u1f1ef_1f1ea.svg
-third_party/region-flags/svg/NP.svg emoji_u1f1f3_1f1f5.svg
+third_party/region-flags/svg/NP.svg emoji_u1f1f3_1f1f5.svg 0
 third_party/region-flags/svg/GM.svg emoji_u1f1ec_1f1f2.svg
 third_party/region-flags/svg/BS.svg emoji_u1f1e7_1f1f8.svg
 third_party/region-flags/svg/GB-ENG.svg emoji_u1f3f4_e0067_e0062_e0065_e006e_e0067_e007f.svg
@@ -222,7 +223,7 @@ third_party/region-flags/svg/AO.svg emoji_u1f1e6_1f1f4.svg
 third_party/region-flags/svg/DZ.svg emoji_u1f1e9_1f1ff.svg
 third_party/region-flags/svg/TF.svg emoji_u1f1f9_1f1eb.svg
 third_party/region-flags/svg/LB.svg emoji_u1f1f1_1f1e7.svg
-third_party/region-flags/svg/PM.svg emoji_u1f1f5_1f1f2.svg
+third_party/region-flags/svg/PM.svg emoji_u1f1f5_1f1f2.svg 0
 third_party/region-flags/svg/CO.svg emoji_u1f1e8_1f1f4.svg
 third_party/region-flags/svg/VE.svg emoji_u1f1fb_1f1ea.svg
 third_party/region-flags/svg/WF.svg emoji_u1f1fc_1f1eb.svg
@@ -232,7 +233,7 @@ third_party/region-flags/svg/GP.svg emoji_u1f1ec_1f1f5.svg
 third_party/region-flags/svg/CR.svg emoji_u1f1e8_1f1f7.svg
 third_party/region-flags/svg/SC.svg emoji_u1f1f8_1f1e8.svg
 third_party/region-flags/svg/NI.svg emoji_u1f1f3_1f1ee.svg
-third_party/region-flags/svg/GF.svg emoji_u1f1ec_1f1eb.svg
+third_party/region-flags/svg/GF.svg emoji_u1f1ec_1f1eb.svg 0
 third_party/region-flags/svg/RO.svg emoji_u1f1f7_1f1f4.svg
 third_party/region-flags/svg/UZ.svg emoji_u1f1fa_1f1ff.svg
 third_party/region-flags/svg/MV.svg emoji_u1f1f2_1f1fb.svg
