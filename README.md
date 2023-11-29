@@ -11,4 +11,6 @@ pushd warp
 # establish a python virtual environment
 pip install -r requirements.txt
 python wave_ninja.py --noto_dir ../noto-emoji
+
+# your waved flags are in build/waved/
 ```
