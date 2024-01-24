@@ -92,7 +92,6 @@ def line_pos(t, start, end):
 # naive impl, essentially encoding something like:
 # https://en.wikipedia.org/wiki/B%C3%A9zier_curve#/media/File:B%C3%A9zier_3_big.svg
 def cubic_pos(t, p0, p1, p2, p3):
-
     q0 = line_pos(t, p0, p1)
     q1 = line_pos(t, p1, p2)
     q2 = line_pos(t, p2, p3)
@@ -310,7 +309,7 @@ def _quadratic_callback(
         ]
         quad_points = cubic_to_quad(cubic_points, max_err)
         quad_segments = []
-        for (control_pt, end_pt) in pathops.decompose_quadratic_segment(
+        for control_pt, end_pt in pathops.decompose_quadratic_segment(
             tuple(quad_points[1:])
         ):
             quad_segments.append(("Q", (*control_pt, *end_pt)))
